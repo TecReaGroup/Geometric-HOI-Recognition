@@ -4,9 +4,9 @@ version = "0.1.0"
 description = "RTMPose and object keypoint based video HOI recognition."
 requires-python = ">=3.12"
 dependencies = [
-    "numpy>=1.26,<3", "opencv-python>=4.10", "torch>=2.6", "torchvision>=0.21",
+    "numpy>=1.26,<3", "opencv-python>=4.10", "torch>=2.6,<3", "torchvision>=0.21,<1",
     "torch-geometric>=2.6", "ultralytics>=8.4", "rtmlib>=0.0.13",
-    "onnxruntime>=1.20", "scipy>=1.14", "pillow>=11",
+    "onnxruntime-gpu[cuda,cudnn]>=1.21,<1.27", "scipy>=1.14", "pillow>=11",
 ]
 
 [project.scripts]
@@ -26,6 +26,17 @@ build-backend = "uv_build"
 
 [tool.uv]
 cache-dir = ".uv-cache"
+# RTMLib's CPU distribution shares files with the GPU distribution.
+exclude-dependencies = ["onnxruntime"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.uv.build-backend]
 module-name = "geometric_hoi"

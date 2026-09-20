@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import cv2
 import numpy as np
+import onnxruntime as ort
 import torch
 from PIL import Image
 from rtmlib import Body, RTMPose, YOLOX
@@ -59,6 +60,8 @@ class FeatureExtractor:
         if self.option["object_class"] not in self.object_pose.names:
             raise ValueError("feature.object_class does not exist in YOLO weight")
         preset = Body.MODE[self.option["pose_size"]]
+        if self.option["pose_device"] == "cuda":
+            ort.preload_dlls(directory="")
         self.person_detector = YOLOX(pose_weight(preset["det"]),
                                      model_input_size=tuple(preset["det_input_size"]),
                                      backend="onnxruntime", device=self.option["pose_device"])
@@ -66,10 +69,11 @@ class FeatureExtractor:
                                    model_input_size=tuple(preset["pose_input_size"]),
                                    to_openpose=False, backend="onnxruntime",
                                    device=self.option["pose_device"])
-        if self.option["pose_device"] == "cuda":
-            for estimator in (self.person_detector, self.person_pose):
-                if "CUDAExecutionProvider" not in estimator.session.get_providers():
-                    raise RuntimeError("CUDA pose requested but ONNX CUDA provider is unavailable")
+        for name, estimator in (("YOLOX", self.person_detector), ("RTMPose", self.person_pose)):
+            providers = estimator.session.get_providers()
+            if self.option["pose_device"] == "cuda" and "CUDAExecutionProvider" not in providers:
+                raise RuntimeError(f"{name}: CUDAExecutionProvider did not initialize")
+            LOGGER.info("%s device=%s providers=%s", name, self.option["pose_device"], providers)
         weight_set = ResNet50_Weights.IMAGENET1K_V2
         self.appearance = resnet50(weights=weight_set).to(self.device).eval()
         self.appearance.fc = torch.nn.Identity()

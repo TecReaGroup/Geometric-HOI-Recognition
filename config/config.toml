@@ -2,11 +2,11 @@
 # "2g-gcn" or "geovis-gnn"
 name = "2g-gcn"
 hidden_size = 128
-device = "cpu"
+device = "cuda:0"
 
 [feature]
 object_weight = "data/model/best.pt"
-pose_device = "cpu"
+pose_device = "cuda"
 pose_size = "balanced"
 object_class = 0
 object_point_index = [0, 1]

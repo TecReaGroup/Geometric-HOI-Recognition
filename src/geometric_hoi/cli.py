@@ -18,6 +18,18 @@ def main() -> None:
     configure_logging()
     try:
         setting = load_setting(arguments.config)
+        if arguments.command in {"train", "run"}:
+            import torch
+
+            device = torch.device(setting["model"]["device"])
+            if device.type == "cuda":
+                if not torch.cuda.is_available():
+                    raise RuntimeError("CUDA unavailable; run make install and check the NVIDIA driver")
+                torch.cuda.set_device(device)
+                logging.getLogger(__name__).info(
+                    "PyTorch=%s CUDA=%s device=%s GPU=%s", torch.__version__,
+                    torch.version.cuda, device, torch.cuda.get_device_name(device),
+                )
         if arguments.command == "prepare":
             from .upstream import REVISION, prepare_source
 
