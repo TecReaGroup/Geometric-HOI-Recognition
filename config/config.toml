@@ -1,0 +1,30 @@
+[model]
+# "2g-gcn" or "geovis-gnn"
+name = "2g-gcn"
+hidden_size = 128
+device = "cpu"
+
+[feature]
+object_weight = "data/model/best.pt"
+pose_device = "cpu"
+pose_size = "balanced"
+object_class = 0
+object_point_index = [0, 1]
+confidence = 0.3
+sample_fps = 10.0
+
+[train]
+video_dir = "data/video"
+window_frames = 16
+stride_frames = 8
+validation_fraction = 0.2
+epochs = 40
+batch_size = 8
+learning_rate = 0.0001
+seed = 42
+
+[run]
+camera = 0
+action_name = "target_action"
+threshold = 0.5
+log_interval_seconds = 1.0
