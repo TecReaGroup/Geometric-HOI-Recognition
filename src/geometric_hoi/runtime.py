@@ -3,6 +3,7 @@
 import logging
 import time
 from collections import deque
+from collections.abc import Callable, Iterator
 
 import cv2
 import numpy as np
@@ -18,8 +19,8 @@ from .upstream import PATCH_VERSION, REVISION
 LOGGER = logging.getLogger(__name__)
 
 
-def run_camera(setting: dict) -> None:
-    """Display and log target-action probabilities from recent camera frames."""
+def camera_prediction(setting: dict, stopped: Callable[[], bool]) -> Iterator[tuple]:
+    """Yield camera images and probabilities without discarding slow observations."""
     path = checkpoint_path(setting)
     if not path.is_file():
         raise FileNotFoundError(f"Train {setting['model']['name']} first; missing {path}")
@@ -45,51 +46,52 @@ def run_camera(setting: dict) -> None:
     extractor = FeatureExtractor(trained)
     option = setting["run"]
     capture = cv2.VideoCapture(option["camera"])
-    frames = deque(maxlen=trained["train"]["window_frames"])
+    capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    window_frames = trained["train"]["window_frames"]
+    frames = deque(maxlen=window_frames)
     interval = 1 / trained["feature"]["sample_fps"]
-    next_sample, last_sample, last_log = 0.0, None, 0.0
-    confidence = None
-    LOGGER.info("Camera=%s model=%s window=%d; press Q or Escape to exit",
+    next_sample, last_log = 0.0, 0.0
+    LOGGER.info("Camera=%s model=%s window=%d; first observation pads initial history",
                 option["camera"], setting["model"]["name"], frames.maxlen)
     try:
         if not capture.isOpened():
             raise RuntimeError(f"Cannot open camera {option['camera']}")
-        while True:
+        while not stopped():
             available, frame = capture.read()
             if not available:
                 raise RuntimeError("Camera stopped delivering frames")
             now = time.monotonic()
-            if now >= next_sample:
-                if last_sample is not None and now - last_sample > interval * 2:
-                    frames.clear()
-                    confidence = None
-                    extractor.reset()
-                    LOGGER.warning("Camera/inference too slow for %.1f FPS; resetting temporal window",
-                                   trained["feature"]["sample_fps"])
-                frames.append(extractor.extract(frame))
-                last_sample = now
-                next_sample = now + interval
-                if len(frames) == frames.maxlen:
-                    observation = {key: np.stack([item[key] for item in frames]) for key in frames[0]}
-                    human, object_feature = pack_clip(observation, trained)
-                    with torch.inference_mode():
-                        probability = network(torch.from_numpy(human[None]).to(device),
-                                              torch.from_numpy(object_feature[None]).to(device))
-                    confidence = float(probability.exp()[0, 1])
-                if now - last_log >= option["log_interval_seconds"]:
-                    if confidence is None:
-                        LOGGER.info("Warming up %d/%d frames", len(frames), frames.maxlen)
-                    else:
-                        LOGGER.info("action=%s confidence=%.4f detected=%s", option["action_name"],
-                                    confidence, confidence >= option["threshold"])
-                    last_log = now
-            caption = (f"{option['action_name']}: {confidence:.1%}" if confidence is not None
-                       else f"Warming up {len(frames)}/{frames.maxlen}")
-            color = (0, 220, 0) if confidence is not None and confidence >= option["threshold"] else (0, 200, 255)
-            cv2.putText(frame, caption, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-            cv2.imshow("Geometric HOI", frame)
-            if cv2.waitKey(1) & 0xFF in (27, ord("q")):
-                break
+            if now < next_sample:
+                continue
+            extracted = extractor.extract(frame)
+            if not frames:
+                frames.extend([extracted] * (window_frames - 1))
+            frames.append(extracted)
+            next_sample = now + interval
+            observation = {key: np.stack([item[key] for item in frames]) for key in frames[0]}
+            human, object_feature = pack_clip(observation, trained)
+            with torch.inference_mode():
+                probability = network(torch.from_numpy(human[None]).to(device),
+                                      torch.from_numpy(object_feature[None]).to(device))
+            confidence = float(probability.exp()[0, 1])
+            if not np.isfinite(confidence):
+                raise RuntimeError("Action model returned a non-finite probability")
+            elapsed = time.monotonic() - now
+            if now - last_log >= option["log_interval_seconds"]:
+                LOGGER.info("action=%s confidence=%.4f detected=%s inference_ms=%.1f",
+                            option["action_name"], confidence, confidence >= option["threshold"],
+                            elapsed * 1000)
+                last_log = now
+            yield frame, confidence, elapsed
     finally:
         capture.release()
-        cv2.destroyAllWindows()
+        LOGGER.info("Camera released")
+
+
+def run_camera(setting: dict) -> None:
+    """Run the responsive desktop recognition preview."""
+    from .preview import run_preview
+
+    run_preview(setting)
