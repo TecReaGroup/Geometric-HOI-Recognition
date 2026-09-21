@@ -33,6 +33,13 @@ def load_setting(path: Path) -> dict:
         raise ValueError("Invalid training window or optimization settings")
     if not 0 < run["threshold"] < 1 or run["log_interval_seconds"] <= 0:
         raise ValueError("Invalid inference threshold or log interval")
+    camera = setting["camera"]
+    if not isinstance(camera["driver"], str) or not camera["driver"].isidentifier():
+        raise ValueError("camera.driver must be a driver module and class name in device")
+    if not (ROOT / "device" / f"{camera['driver']}.py").is_file():
+        raise ValueError(f"Camera driver not found: {camera['driver']}")
+    if camera["timeout_seconds"] <= 0:
+        raise ValueError("camera.timeout_seconds must be positive")
     return setting
 
 

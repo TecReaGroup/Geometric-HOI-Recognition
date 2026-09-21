@@ -24,7 +24,17 @@ learning_rate = 0.0001
 seed = 42
 
 [run]
-camera = 0
 action_name = "target_action"
 threshold = 0.5
 log_interval_seconds = 1.0
+
+[camera]
+driver = "UsbCamera"
+deviceId = 0
+backend = "dshow"
+colorImageSizeX = 1280
+colorImageSizeY = 720
+fps = 30
+fourcc = "MJPG"
+frameInterval = 0.033
+timeout_seconds = 5.0

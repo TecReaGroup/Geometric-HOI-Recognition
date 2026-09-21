@@ -4,8 +4,8 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable, Iterator
+from importlib.util import module_from_spec, spec_from_file_location
 
-import cv2
 import numpy as np
 import torch
 
@@ -17,6 +17,7 @@ from .train import CHECKPOINT_VERSION
 from .upstream import PATCH_VERSION, REVISION
 
 LOGGER = logging.getLogger(__name__)
+CAMERA_POLL_SECONDS = 0.1
 
 
 def camera_prediction(setting: dict, stopped: Callable[[], bool]) -> Iterator[tuple]:
@@ -45,24 +46,33 @@ def camera_prediction(setting: dict, stopped: Callable[[], bool]) -> Iterator[tu
     network.eval()
     extractor = FeatureExtractor(trained)
     option = setting["run"]
-    capture = cv2.VideoCapture(option["camera"])
-    capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    camera_option = setting["camera"]
+    driver_name = camera_option["driver"]
+    driver_path = ROOT / "device" / f"{driver_name}.py"
+    spec = spec_from_file_location(driver_name, driver_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load camera driver {driver_path}")
+    driver_module = module_from_spec(spec)
+    spec.loader.exec_module(driver_module)
+    camera_class = getattr(driver_module, driver_name)
     window_frames = trained["train"]["window_frames"]
     frames = deque(maxlen=window_frames)
     interval = 1 / trained["feature"]["sample_fps"]
     next_sample, last_log = 0.0, 0.0
-    LOGGER.info("Camera=%s model=%s window=%d; first observation pads initial history",
-                option["camera"], setting["model"]["name"], frames.maxlen)
+    capture = camera_class(camera_option)
     try:
-        if not capture.isOpened():
-            raise RuntimeError(f"Cannot open camera {option['camera']}")
+        capture.open()
+        last_frame = time.monotonic()
+        LOGGER.info("Camera driver=%s device=%s model=%s window=%d; first observation pads initial history",
+                    driver_name, camera_option["deviceId"], setting["model"]["name"], frames.maxlen)
         while not stopped():
-            available, frame = capture.read()
-            if not available:
-                raise RuntimeError("Camera stopped delivering frames")
+            _, frame = capture.getFrame(timeout=CAMERA_POLL_SECONDS)
             now = time.monotonic()
+            if frame is None:
+                if now - last_frame >= camera_option["timeout_seconds"]:
+                    raise RuntimeError("Camera stopped delivering frames")
+                continue
+            last_frame = now
             if now < next_sample:
                 continue
             extracted = extractor.extract(frame)
@@ -86,7 +96,7 @@ def camera_prediction(setting: dict, stopped: Callable[[], bool]) -> Iterator[tu
                 last_log = now
             yield frame, confidence, elapsed
     finally:
-        capture.release()
+        capture.stopThread()
         LOGGER.info("Camera released")
 
 
