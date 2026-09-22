@@ -113,13 +113,11 @@ class UsbCamera:
             self.handle = None
 
     def _videoThread(self):
-        interval = float(self.cameraConfig.get("frameInterval", 0.033))
         while self.runStatus >= 0:
             if self.runStatus != 10:
                 time.sleep(0.05)
                 continue
 
-            started = time.perf_counter()
             ok, frame = self.cap.read()
             if ok and frame is not None:
                 with self.condition:
@@ -127,5 +125,3 @@ class UsbCamera:
                     self.condition.notify()
             else:
                 time.sleep(0.02)
-
-            time.sleep(max(0.0, interval - (time.perf_counter() - started)))

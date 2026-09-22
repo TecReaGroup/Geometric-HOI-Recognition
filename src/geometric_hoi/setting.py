@@ -1,5 +1,6 @@
 """Project configuration and local runtime directories."""
 
+import math
 import os
 import tomllib
 from pathlib import Path
@@ -23,8 +24,8 @@ def load_setting(path: Path) -> dict:
     indexes = feature["object_point_index"]
     if len(indexes) != 2 or min(indexes) < 0 or indexes[0] == indexes[1]:
         raise ValueError("Two distinct nonnegative object_point_index values are required")
-    if feature["sample_fps"] <= 0 or not 0 < feature["confidence"] < 1:
-        raise ValueError("Invalid feature sampling rate or confidence")
+    if not 0 < feature["confidence"] < 1:
+        raise ValueError("feature.confidence must be between zero and one")
     if not 0 < train["validation_fraction"] < 0.5:
         raise ValueError("train.validation_fraction must be between zero and 0.5")
     if train["window_frames"] < 2 or min(train[k] for k in (
@@ -34,6 +35,8 @@ def load_setting(path: Path) -> dict:
     if not 0 < run["threshold"] < 1 or run["log_interval_seconds"] <= 0:
         raise ValueError("Invalid inference threshold or log interval")
     camera = setting["camera"]
+    if not math.isfinite(camera["fps"]) or camera["fps"] <= 0:
+        raise ValueError("camera.fps must be finite and positive")
     if not isinstance(camera["driver"], str) or not camera["driver"].isidentifier():
         raise ValueError("camera.driver must be a driver module and class name in device")
     if not (ROOT / "device" / f"{camera['driver']}.py").is_file():

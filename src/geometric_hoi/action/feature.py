@@ -69,7 +69,9 @@ def pack_clip(observation: dict[str, np.ndarray], setting: dict) -> tuple[np.nda
     coordinate = point[:, :, :2]
     velocity = np.zeros_like(coordinate)
     visible_pair = (point[1:, :, 2] > 0) & (point[:-1, :, 2] > 0)
-    velocity[1:] = (coordinate[1:] - coordinate[:-1]) * setting["feature"]["sample_fps"]
+    elapsed = np.diff(observation["timestamp"])[:, None, None]
+    np.divide(coordinate[1:] - coordinate[:-1], elapsed,
+              out=velocity[1:], where=elapsed > 0)
     velocity[1:] *= visible_pair[:, :, None]
     geometry = np.concatenate((coordinate, velocity), axis=-1).reshape(len(point), -1)
     human_feature = np.concatenate((observation["appearance"][:, 0], geometry), axis=-1)

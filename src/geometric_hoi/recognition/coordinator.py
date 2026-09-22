@@ -36,8 +36,7 @@ def camera_prediction(setting: dict, stopped: Callable[[], bool]) -> Iterator[tu
     driver_module = module_from_spec(spec)
     spec.loader.exec_module(driver_module)
     camera_class = getattr(driver_module, driver_name)
-    interval = 1 / setting["feature"]["sample_fps"]
-    next_sample, last_log = 0.0, 0.0
+    last_log = 0.0
     capture = camera_class(camera_option)
     try:
         for worker in workers:
@@ -55,8 +54,6 @@ def camera_prediction(setting: dict, stopped: Callable[[], bool]) -> Iterator[tu
                     raise RuntimeError("Camera stopped delivering frames")
                 continue
             last_frame = now
-            if now < next_sample:
-                continue
             sequence += 1
             packet = CaptureFrame(sequence, captured_at, frame)
             bus.submit(packet)
@@ -66,7 +63,6 @@ def camera_prediction(setting: dict, stopped: Callable[[], bool]) -> Iterator[tu
             if pair is None:
                 break
             confidence = action.predict(packet, pair["human"], pair["object"])
-            next_sample = now + interval
             elapsed = time.monotonic() - now
             if now - last_log >= option["log_interval_seconds"]:
                 LOGGER.info("action=%s confidence=%.4f detected=%s inference_ms=%.1f",

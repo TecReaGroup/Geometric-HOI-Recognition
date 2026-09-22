@@ -148,7 +148,7 @@ class PreviewWindow(QMainWindow):
         self.fps_frame_count = 0
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_frame)
-        self.timer.start(33)
+        self.timer.start(max(1, int(1000 / setting["camera"]["fps"])))
         self.worker.start()
 
     def refresh_frame(self) -> None:

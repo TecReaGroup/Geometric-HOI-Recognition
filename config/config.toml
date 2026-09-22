@@ -12,7 +12,6 @@ workspace_mb = 1024
 object_class = 0
 object_point_index = [0, 1]
 confidence = 0.3
-sample_fps = 10.0
 
 [train]
 video_dir = "data/video"
@@ -37,5 +36,4 @@ colorImageSizeX = 1920
 colorImageSizeY = 1080
 fps = 30
 fourcc = "MJPG"
-frameInterval = 0.033
 timeout_seconds = 5.0

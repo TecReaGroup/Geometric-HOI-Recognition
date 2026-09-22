@@ -16,11 +16,11 @@ from ..setting import ROOT
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_SUFFIX = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".webm"}
-FEATURE_VERSION = 2
+FEATURE_VERSION = 3
 
 
 def extract_video(path: Path, extractor: FeatureExtractor, setting: dict, fingerprint: str) -> Path:
-    """Decode sampled frames and persist features with source timestamps."""
+    """Decode every frame and persist features with source timestamps."""
     stamp = path.stat()
     signature = json.dumps([str(path.resolve()), stamp.st_size, stamp.st_mtime_ns,
                             setting["feature"], fingerprint, FEATURE_VERSION], sort_keys=True)
@@ -35,23 +35,17 @@ def extract_video(path: Path, extractor: FeatureExtractor, setting: dict, finger
         fps = capture.get(cv2.CAP_PROP_FPS)
         if not capture.isOpened() or not np.isfinite(fps) or fps <= 0:
             raise ValueError(f"Cannot decode video or determine FPS: {path}")
-        sample_fps = setting["feature"]["sample_fps"]
-        if fps < sample_fps:
-            raise ValueError(f"{path}: source FPS {fps:.3f} < configured sample_fps {sample_fps}")
-        frame_index, next_sample = 0, 0.0
+        frame_index = 0
         while True:
             available, frame = capture.read()
             if not available:
                 break
             timestamp = frame_index / fps
             frame_index += 1
-            if timestamp + 1e-8 < next_sample:
-                continue
             observations.append(extractor.extract(frame))
             timestamps.append(timestamp)
-            next_sample += 1 / sample_fps
             if len(observations) % 100 == 0:
-                LOGGER.info("Extracting %s sampled_frames=%d", path.name, len(observations))
+                LOGGER.info("Extracting %s frames=%d", path.name, len(observations))
     finally:
         capture.release()
     if not observations:
@@ -86,7 +80,7 @@ class ClipDataset(Dataset):
         stop = start + self.setting["train"]["window_frames"]
         with np.load(entry["cache"], allow_pickle=False) as archive:
             observation = {key: archive[key][start:stop] for key in
-                           ("human_point", "object_point", "appearance")}
+                           ("human_point", "object_point", "appearance", "timestamp")}
         human, object_feature = pack_clip(observation, self.setting)
         return torch.from_numpy(human), torch.from_numpy(object_feature), entry["label"]
 
@@ -118,7 +112,7 @@ def build_dataset(setting: dict, extractor: FeatureExtractor, fingerprint: str) 
                                folder, window)
             for partition, start, stop in ranges:
                 if stop - start < window:
-                    raise ValueError(f"{path}: {partition} needs >= {window} sampled frames; add longer/more videos")
+                    raise ValueError(f"{path}: {partition} needs >= {window} frames; add longer/more videos")
                 for offset in range(start, stop - window + 1, stride):
                     split[partition].append({"video": str(path), "cache": str(cache),
                                              "start": offset, "label": label})

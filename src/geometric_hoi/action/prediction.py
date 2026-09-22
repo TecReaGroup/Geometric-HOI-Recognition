@@ -29,7 +29,7 @@ class ActionPrediction:
             raise ValueError("Checkpoint architecture version changed; retrain")
         if trained["model"]["name"] != setting["model"]["name"]:
             raise ValueError("Checkpoint model does not match configuration")
-        for key in ("object_class", "object_point_index", "confidence", "sample_fps",
+        for key in ("object_class", "object_point_index", "confidence",
                     "person_detector", "person_pose"):
             if trained["feature"].get(key) != setting["feature"][key]:
                 raise ValueError(f"feature.{key} differs from training; restore it or retrain")
@@ -51,6 +51,7 @@ class ActionPrediction:
     def predict(self, frame, human, target) -> float:
         """Update action history only after both branches have completed the same frame."""
         extracted = self.appearance.extract(frame.image, human, target)
+        extracted["timestamp"] = np.asarray(frame.captured_at)
         if not self.frames:
             self.frames.extend([extracted] * (self.window_frames - 1))
         self.frames.append(extracted)
