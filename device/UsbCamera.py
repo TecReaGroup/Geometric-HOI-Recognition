@@ -125,7 +125,7 @@ class UsbCamera:
 
             started = time.perf_counter()
             ok, frame = self.cap.read()
-            captured_at = time.monotonic()
+            captured_at = time.perf_counter()
             read_seconds = time.perf_counter() - started
             if ok and frame is not None:
                 with self.condition:

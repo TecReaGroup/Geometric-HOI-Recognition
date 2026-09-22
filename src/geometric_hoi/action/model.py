@@ -1,5 +1,6 @@
 """Adapt official networks to single-person RGB keypoint clips."""
 
+import math
 from typing import Any
 
 import torch
@@ -46,6 +47,4 @@ class ActionModel(nn.Module):
         output = self.network(human, object_feature, presence,
                               human_segmentation=boundary, objects_segmentation=boundary)
         frame_log_probability = output[4][:, :, :, 0]
-        return torch.logsumexp(frame_log_probability, dim=-1) - torch.log(
-            human.new_tensor(steps)
-        )
+        return torch.logsumexp(frame_log_probability, dim=-1) - math.log(steps)

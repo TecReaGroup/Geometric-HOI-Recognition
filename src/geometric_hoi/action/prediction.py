@@ -13,6 +13,7 @@ from ..performance import PerformanceWindow
 from .feature import AppearanceFeature, pack_clip
 from .model import CHECKPOINT_VERSION, ActionModel
 from .upstream import PATCH_VERSION, REVISION
+from .replay import ActionReplay
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +46,10 @@ class ActionPrediction:
         self.network.eval()
         self.appearance = AppearanceFeature(setting)
         self.window_frames = trained["train"]["window_frames"]
+        self.infer = self.network
+        if trained["model"]["name"] == "2g-gcn":
+            self.infer = ActionReplay(self.network, self.window_frames,
+                                     saved["object_point_count"], self.device)
         self.frames = deque(maxlen=self.window_frames)
         self.threshold = setting["run"]["threshold"]
         self.active = None
@@ -68,8 +73,8 @@ class ActionPrediction:
         observation = {key: np.stack([item[key] for item in self.frames]) for key in extracted}
         human_feature, object_feature = pack_clip(observation, self.setting)
         packed_at = time.perf_counter()
-        probability = self.network(torch.from_numpy(human_feature[None]).to(self.device),
-                                   torch.from_numpy(object_feature[None]).to(self.device))
+        probability = self.infer(torch.from_numpy(human_feature[None]).to(self.device),
+                                 torch.from_numpy(object_feature[None]).to(self.device))
         confidence = float(probability.exp()[0, 1])
         self.performance.record({"appearance": appearance_finished - started,
                                  "pack_clip": packed_at - appearance_finished,

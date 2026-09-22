@@ -14,6 +14,7 @@ REVISION = {
     "geovis-gnn": ("https://github.com/tanqiu98/GeoVis-GNN.git", "839cc6462ea43bcc3249678fb8c2b6b7c6920c19"),
 }
 PATCH_VERSION = 3
+SOURCE_OPTIMIZATION_VERSION = 1
 
 
 def prepare_source(name: str) -> Path:
@@ -22,7 +23,7 @@ def prepare_source(name: str) -> Path:
     namespace = "official_" + name.replace("-", "_")
     destination = ROOT / "temp" / "vendor" / namespace
     marker = destination / ".revision"
-    signature = f"{revision}:{PATCH_VERSION}"
+    signature = f"{revision}:{PATCH_VERSION}:{SOURCE_OPTIMIZATION_VERSION}"
     if marker.exists() and marker.read_text() == signature:
         return destination
     checkout = ROOT / "temp" / "source" / name
@@ -45,6 +46,17 @@ def prepare_source(name: str) -> Path:
             source = source.replace("from pyrutils", f"from {namespace}.pyrutils")
             source = source.replace("import pyrutils", f"import {namespace}.pyrutils")
         if relative == "vhoi/models.py":
+            # Select the next segment end on-device; trailing frames keep their own state.
+            start = source.index("    batch_size = hx_s.size(0)", source.index("def reorder_hidden_states("))
+            end = source.index("    return hx_s", start) + len("    return hx_s")
+            source = source[:start] + (
+                "    steps = hx_s.size(1)\n"
+                "    positions = torch.arange(steps, device=hx_s.device).expand_as(ux_s)\n"
+                "    ends = torch.where(ux_s != 0, positions, steps)\n"
+                "    following = ends.flip(1).cummin(dim=1).values.flip(1)\n"
+                "    indexes = torch.where(following < steps, following, positions)\n"
+                "    return hx_s.gather(1, indexes.unsqueeze(-1).expand_as(hx_s))"
+            ) + source[end:]
             # An all-missing object row must not create NaN gradients in softmax.
             source = source.replace("fill_value=float('-inf')", "fill_value=torch.finfo(att_weights.dtype).min")
             source = source.replace("torch.full_like(distances, fill_value=torch.finfo(att_weights.dtype).min)",
@@ -79,7 +91,8 @@ def prepare_source(name: str) -> Path:
         target.write_text(source, encoding="utf-8")
     (destination / "__init__.py").write_text("", encoding="utf-8")
     marker.write_text(signature, encoding="utf-8")
-    LOGGER.info("Prepared official source %s revision=%s patch=%d", name, revision, PATCH_VERSION)
+    LOGGER.info("Prepared official source %s revision=%s patch=%d optimization=%d",
+                name, revision, PATCH_VERSION, SOURCE_OPTIMIZATION_VERSION)
     return destination
 
 

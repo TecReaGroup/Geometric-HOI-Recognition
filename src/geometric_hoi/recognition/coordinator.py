@@ -64,13 +64,13 @@ def camera_prediction(
         capture.open()
         report_status("正在等待首帧推理…")
         sequence = 0
-        last_frame = time.monotonic()
+        last_frame = time.perf_counter()
         LOGGER.info("Camera driver=%s device=%s model=%s; human/object workers ready",
                     driver_name, camera_option["deviceId"], setting["model"]["name"])
         while not stopped():
-            poll_started = time.monotonic()
+            poll_started = time.perf_counter()
             captured_at, frame = capture.getFrame(timeout=CAMERA_POLL_SECONDS)
-            now = time.monotonic()
+            now = time.perf_counter()
             if frame is None:
                 if now - last_frame >= camera_option["timeout_seconds"]:
                     raise RuntimeError("Camera stopped delivering frames")
@@ -84,9 +84,9 @@ def camera_prediction(
                 pair = bus.wait_pair(CAMERA_POLL_SECONDS)
             if pair is None:
                 break
-            paired_at = time.monotonic()
+            paired_at = time.perf_counter()
             confidence = action.predict(packet, pair["human"], pair["object"])
-            finished = time.monotonic()
+            finished = time.perf_counter()
             elapsed = finished - now
             performance.record({"capture_wait": now - poll_started,
                                 "frame_age_at_dispatch": now - captured_at,
