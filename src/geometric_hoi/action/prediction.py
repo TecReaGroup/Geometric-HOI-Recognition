@@ -1,6 +1,7 @@
 """Own checkpoint validation, temporal history and action decisions."""
 
 import logging
+import time
 from collections import deque
 
 import numpy as np
@@ -8,6 +9,7 @@ import torch
 
 from ..recognition.engine import fingerprint
 from ..setting import ROOT, checkpoint_path
+from ..performance import PerformanceWindow
 from .feature import AppearanceFeature, pack_clip
 from .model import CHECKPOINT_VERSION, ActionModel
 from .upstream import PATCH_VERSION, REVISION
@@ -46,20 +48,33 @@ class ActionPrediction:
         self.frames = deque(maxlen=self.window_frames)
         self.threshold = setting["run"]["threshold"]
         self.active = None
+        self.performance = PerformanceWindow("action", setting["run"]["log_interval_seconds"])
+        LOGGER.info("Performance runtime: appearance=PyTorch dtype=%s action=PyTorch dtype=%s "
+                    "window_frames=%d; stage timings are wall-clock including CPU transfers; "
+                    "parallel human/object durations must not be summed",
+                    next(self.appearance.encoder.parameters()).dtype,
+                    next(self.network.parameters()).dtype, self.window_frames)
 
     @torch.inference_mode()
     def predict(self, frame, human, target) -> float:
         """Update action history only after both branches have completed the same frame."""
+        started = time.perf_counter()
         extracted = self.appearance.extract(frame.image, human, target)
+        appearance_finished = time.perf_counter()
         extracted["timestamp"] = np.asarray(frame.captured_at)
         if not self.frames:
             self.frames.extend([extracted] * (self.window_frames - 1))
         self.frames.append(extracted)
         observation = {key: np.stack([item[key] for item in self.frames]) for key in extracted}
         human_feature, object_feature = pack_clip(observation, self.setting)
+        packed_at = time.perf_counter()
         probability = self.network(torch.from_numpy(human_feature[None]).to(self.device),
                                    torch.from_numpy(object_feature[None]).to(self.device))
         confidence = float(probability.exp()[0, 1])
+        self.performance.record({"appearance": appearance_finished - started,
+                                 "pack_clip": packed_at - appearance_finished,
+                                 "network_transfer_inference": time.perf_counter() - packed_at,
+                                 "total": time.perf_counter() - started})
         if not np.isfinite(confidence):
             raise RuntimeError("Action model returned a non-finite probability")
         detected = confidence >= self.threshold

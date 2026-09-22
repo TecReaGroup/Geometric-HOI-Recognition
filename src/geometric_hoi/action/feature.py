@@ -1,5 +1,7 @@
 """Appearance and temporal features shared by training and live recognition."""
 
+import time
+
 import cv2
 import numpy as np
 import torch
@@ -7,6 +9,7 @@ from PIL import Image
 from torchvision.models import ResNet50_Weights, resnet50
 
 from ..recognition.engine import load_runtime
+from ..performance import PerformanceWindow
 from ..recognition.keypoint import HumanKeypoint, KeypointObservation, ObjectKeypoint
 
 
@@ -19,11 +22,13 @@ class AppearanceFeature:
         self.encoder = resnet50(weights=weight).to(self.device).eval()
         self.encoder.fc = torch.nn.Identity()
         self.transform = weight.transforms()
+        self.performance = PerformanceWindow("appearance", setting["run"]["log_interval_seconds"])
 
     @torch.inference_mode()
     def extract(self, frame: np.ndarray, human: KeypointObservation,
                 target: KeypointObservation) -> dict[str, np.ndarray]:
         """Select COCO17 from RTMW and attach aligned frozen crop descriptors."""
+        started = time.perf_counter()
         height, width = frame.shape[:2]
         appearance = np.zeros((2, 2048), dtype=np.float32)
         crops, slots = [], []
@@ -35,8 +40,14 @@ class AppearanceFeature:
             if crop.size:
                 crops.append(self.transform(Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))))
                 slots.append(slot)
+        prepared_at = time.perf_counter()
         if crops:
             appearance[slots] = self.encoder(torch.stack(crops).to(self.device)).cpu().numpy()
+        finished = time.perf_counter()
+        duration = {"crop_preprocess": prepared_at - started, "total": finished - started}
+        if crops:
+            duration[f"resnet_batch_{len(crops)}_transfer_inference"] = finished - prepared_at
+        self.performance.record(duration)
         return {"human_point": human.point[:17], "object_point": target.point,
                 "appearance": appearance}
 

@@ -1,5 +1,6 @@
 """Independent human and object keypoint operations."""
 
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -7,6 +8,7 @@ import torch
 from ultralytics import YOLO
 
 from ..setting import ROOT
+from ..performance import PerformanceWindow
 from .engine import INPUT_SIZE, load_rtmw, person_detector_weight, yolo_engine
 
 
@@ -34,24 +36,34 @@ class HumanKeypoint:
         self.detector = YOLO(str(yolo_engine(person_detector_weight(), setting)), task="detect")
         self.pose = load_rtmw(setting)
         self.center = None
+        self.performance = PerformanceWindow("human", setting["run"]["log_interval_seconds"])
 
     @torch.inference_mode()
     def estimate(self, frame: np.ndarray) -> KeypointObservation:
         """Return only the selected person's whole-body keypoints and box."""
+        started = time.perf_counter()
         prediction = self.detector.predict(frame, device=self.device, classes=[0],
                                            conf=self.threshold, imgsz=INPUT_SIZE,
                                            rect=False, verbose=False)[0]
         boxes = prediction.boxes.xyxy.cpu().numpy()
+        detected_at = time.perf_counter()
         point = np.zeros((133, 3), dtype=np.float32)
         if not len(boxes):
             self.center = None
+            self.performance.record({"detector": detected_at - started,
+                                     "total": time.perf_counter() - started})
             return KeypointObservation(point, None)
         box = boxes[select_box(boxes, self.center)]
         self.center = (box[:2] + box[2:]) / 2
         coordinate, score = self.pose(frame, bboxes=box[None])
+        posed_at = time.perf_counter()
         point[:, :2] = coordinate[0] / np.array(frame.shape[1::-1], dtype=np.float32)
         point[:, 2] = score[0]
         point[~np.isfinite(point).all(axis=1) | (point[:, 2] < self.threshold)] = 0
+        self.performance.record({"detector": detected_at - started,
+                                 "pose": posed_at - detected_at,
+                                 "postprocess": time.perf_counter() - posed_at,
+                                 "total": time.perf_counter() - started})
         return KeypointObservation(point, box)
 
 
@@ -72,18 +84,23 @@ class ObjectKeypoint:
         del source
         self.pose = YOLO(str(yolo_engine(weight, setting)), task="pose")
         self.center = None
+        self.performance = PerformanceWindow("object", setting["run"]["log_interval_seconds"])
 
     @torch.inference_mode()
     def estimate(self, frame: np.ndarray) -> KeypointObservation:
         """Return normalized object keypoints and their corresponding crop box."""
+        started = time.perf_counter()
         prediction = self.pose.predict(
             frame, device=self.device, verbose=False, imgsz=INPUT_SIZE, rect=False,
             conf=self.option["confidence"], classes=[self.option["object_class"]],
         )[0]
         point = np.zeros((self.point_count, 3), dtype=np.float32)
         boxes = prediction.boxes.xyxy.cpu().numpy()
+        detected_at = time.perf_counter()
         if not len(boxes):
             self.center = None
+            self.performance.record({"pose_call": detected_at - started,
+                                     "total": time.perf_counter() - started})
             return KeypointObservation(point, None)
         index = select_box(boxes, self.center)
         box = boxes[index]
@@ -95,4 +112,7 @@ class ObjectKeypoint:
         point[:, 2] = (confidence[index].cpu().numpy() if confidence is not None
                        else float(prediction.boxes.conf[index]))
         point[~np.isfinite(point).all(axis=1) | (point[:, 2] < self.option["confidence"])] = 0
+        self.performance.record({"pose_call": detected_at - started,
+                                 "keypoint_download_postprocess": time.perf_counter() - detected_at,
+                                 "total": time.perf_counter() - started})
         return KeypointObservation(point, box)

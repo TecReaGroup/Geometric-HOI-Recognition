@@ -1,30 +1,38 @@
 """Qt video preview with a bounded mailbox and probability card."""
 
 import logging
+import multiprocessing
 import threading
 import time
+from queue import Empty
 
-import cv2
 from PySide6.QtCore import QRectF, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
+
+from .session import run_recognition
+from ..performance import PerformanceWindow
 
 LOGGER = logging.getLogger(__name__)
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 700
 FPS_UPDATE_SECONDS = 1.0
+PROCESS_POLL_SECONDS = 0.1
+SHUTDOWN_GRACE_SECONDS = 3.0
 
 
 class RecognitionThread(QThread):
-    """Keep model execution off the UI thread and retain only the newest image."""
+    """Bridge the inference process to Qt without blocking the UI event loop."""
 
     failed = Signal(str)
+    status_changed = Signal(str)
 
     def __init__(self, setting: dict) -> None:
         super().__init__()
         self.setting = setting
         self.lock = threading.Lock()
         self.latest = None
+        self.overwritten = 0
 
     def take_frame(self) -> tuple | None:
         """Consume the latest prediction without queuing obsolete frames."""
@@ -33,21 +41,59 @@ class RecognitionThread(QThread):
         return latest
 
     def run(self) -> None:
-        """Load models and continuously publish actual model probabilities."""
-        from .coordinator import camera_prediction
-
+        """Receive predictions and own bounded, asynchronous process shutdown."""
+        context = multiprocessing.get_context("spawn")
+        stopped = context.Event()
+        mailbox = context.Queue(maxsize=2)
+        inference = context.Process(target=run_recognition,
+                                    args=(self.setting, stopped, mailbox),
+                                    name="hoi-recognition")
+        started = False
+        performance = PerformanceWindow("preview_receive", self.setting["run"]["log_interval_seconds"])
         try:
-            for frame, probability, elapsed in camera_prediction(
-                self.setting, self.isInterruptionRequested
-            ):
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0],
-                               QImage.Format.Format_RGB888).copy()
+            if self.isInterruptionRequested():
+                return
+            inference.start()
+            started = True
+            LOGGER.info("Recognition process started pid=%s", inference.pid)
+            while not self.isInterruptionRequested():
+                try:
+                    kind, payload = mailbox.get(timeout=PROCESS_POLL_SECONDS)
+                except Empty:
+                    if not inference.is_alive():
+                        raise RuntimeError(
+                            f"Recognition process exited unexpectedly (code={inference.exitcode})"
+                        )
+                    continue
+                if kind == "failure":
+                    self.failed.emit(payload)
+                    break
+                if kind == "status":
+                    self.status_changed.emit(payload)
+                    continue
+                pixels, width, height, stride, probability, elapsed, published_at = payload
+                received_at = time.perf_counter()
+                image = QImage(pixels, width, height, stride, QImage.Format.Format_RGB888).copy()
                 with self.lock:
-                    self.latest = image, probability, elapsed
+                    self.overwritten += self.latest is not None
+                    self.latest = image, probability, elapsed, time.perf_counter()
+                performance.record({"ipc_latency": received_at - published_at,
+                                    "image_copy": time.perf_counter() - received_at})
         except Exception as exc:
             LOGGER.exception("Camera preview failed")
             self.failed.emit(str(exc))
+        finally:
+            stopped.set()
+            if started:
+                inference.join(SHUTDOWN_GRACE_SECONDS)
+                if inference.is_alive():
+                    LOGGER.warning("Recognition shutdown exceeded %.1fs; terminating pid=%s",
+                                   SHUTDOWN_GRACE_SECONDS, inference.pid)
+                    inference.terminate()
+                    inference.join()
+                LOGGER.info("Recognition process stopped exitcode=%s", inference.exitcode)
+            inference.close()
+            mailbox.close()
 
 
 class CameraView(QWidget):
@@ -60,10 +106,12 @@ class CameraView(QWidget):
         self.fps = 0.0
         self.action = setting["run"]["action_name"]
         self.threshold = setting["run"]["threshold"]
+        self.performance = PerformanceWindow("preview_paint", setting["run"]["log_interval_seconds"])
         self.setMinimumSize(640, 360)
 
     def paintEvent(self, event) -> None:
         """Draw an unclipped video and a high-contrast probability indicator."""
+        started = time.perf_counter()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -122,6 +170,8 @@ class CameraView(QWidget):
         painter.setPen(QColor("#e8edf5"))
         painter.drawText(fps_card, Qt.AlignmentFlag.AlignCenter, f"FPS  {self.fps:.1f}")
         painter.end()
+        if self.image is not None:
+            self.performance.record({"paint_event": time.perf_counter() - started})
 
 
 class PreviewWindow(QMainWindow):
@@ -141,15 +191,27 @@ class PreviewWindow(QMainWindow):
         self.statusBar().showMessage("正在加载模型与摄像头，首帧完成后直接显示概率…")
         self.worker = RecognitionThread(setting)
         self.worker.failed.connect(self.show_failure)
+        self.worker.status_changed.connect(self.show_status)
         self.worker.finished.connect(self.finish_close)
         self.closing = False
         self.failure = None
         self.fps_started = None
         self.fps_frame_count = 0
+        self.performance = PerformanceWindow("preview_consume", setting["run"]["log_interval_seconds"])
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_frame)
         self.timer.start(max(1, int(1000 / setting["camera"]["fps"])))
-        self.worker.start()
+        QTimer.singleShot(0, self.start_recognition)
+
+    def start_recognition(self) -> None:
+        """Start the background bridge after the window enters the event loop."""
+        if not self.closing:
+            self.worker.start()
+
+    def show_status(self, message: str) -> None:
+        """Display startup progress without overwriting shutdown or failure messages."""
+        if not self.closing and self.failure is None:
+            self.statusBar().showMessage(message)
 
     def refresh_frame(self) -> None:
         """Display the newest inference output at a bounded refresh rate."""
@@ -162,12 +224,17 @@ class PreviewWindow(QMainWindow):
                 self.fps_frame_count += 1
         if self.fps_started is not None and now - self.fps_started >= FPS_UPDATE_SECONDS:
             self.view.fps = self.fps_frame_count / (now - self.fps_started)
+            with self.worker.lock:
+                overwritten, self.worker.overwritten = self.worker.overwritten, 0
+            LOGGER.info("performance displayed_fps=%.2f preview_overwritten=%d window_s=%.2f",
+                        self.view.fps, overwritten, now - self.fps_started)
             self.fps_started = now
             self.fps_frame_count = 0
             self.view.update()
         if latest is None:
             return
-        self.view.image, self.view.probability, elapsed = latest
+        self.view.image, self.view.probability, elapsed, received_at = latest
+        self.performance.record({"mailbox_wait": time.perf_counter() - received_at})
         self.view.update()
         if self.failure is None:
             self.statusBar().showMessage(
@@ -196,10 +263,10 @@ class PreviewWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         """Wait asynchronously for camera ownership to be released."""
         self.timer.stop()
+        self.closing = True
         if self.worker.isRunning():
-            self.closing = True
             self.worker.requestInterruption()
-            self.statusBar().showMessage("正在释放摄像头…")
+            self.statusBar().showMessage("正在停止识别并释放摄像头…")
             event.ignore()
         else:
             event.accept()

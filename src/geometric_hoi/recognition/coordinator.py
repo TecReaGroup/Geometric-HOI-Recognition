@@ -5,23 +5,41 @@ import time
 from collections.abc import Callable, Iterator
 from importlib.util import module_from_spec, spec_from_file_location
 
-from ..action.prediction import ActionPrediction
 from ..setting import ROOT
-from .bus import CaptureFrame, FrameBus
-from .engine import load_runtime
-from .keypoint import HumanKeypoint, ObjectKeypoint
-from .worker import KeypointWorker
+from ..performance import PerformanceWindow
 
 LOGGER = logging.getLogger(__name__)
 CAMERA_POLL_SECONDS = 0.1
 
 
-def camera_prediction(setting: dict, stopped: Callable[[], bool]) -> Iterator[tuple]:
+def camera_prediction(
+    setting: dict, stopped: Callable[[], bool], report_status: Callable[[str], None]
+) -> Iterator[tuple]:
     """Dispatch one shared frame and yield only its fully aligned action prediction."""
+    from ..action.prediction import ActionPrediction
+    from .bus import CaptureFrame, FrameBus
+    from .engine import load_runtime
+    from .keypoint import HumanKeypoint, ObjectKeypoint
+    from .worker import KeypointWorker
+
+    if stopped():
+        return
+    report_status("正在加载动作识别模型与外观特征模型…")
     action = ActionPrediction(setting)
+    if stopped():
+        return
+    report_status("正在加载 CUDA / TensorRT 运行库…")
     load_runtime()
+    if stopped():
+        return
+    report_status("正在加载人体关键点模型…")
     human_estimator = HumanKeypoint(setting)
+    if stopped():
+        return
+    report_status("正在加载物体关键点模型…")
     object_estimator = ObjectKeypoint(setting)
+    if stopped():
+        return
     bus = FrameBus()
     device = setting["model"]["device"]
     workers = [KeypointWorker("human", human_estimator, bus, device),
@@ -38,15 +56,19 @@ def camera_prediction(setting: dict, stopped: Callable[[], bool]) -> Iterator[tu
     camera_class = getattr(driver_module, driver_name)
     last_log = 0.0
     capture = camera_class(camera_option)
+    performance = PerformanceWindow("pipeline", option["log_interval_seconds"])
     try:
         for worker in workers:
             worker.start()
+        report_status("正在打开摄像头…")
         capture.open()
+        report_status("正在等待首帧推理…")
         sequence = 0
         last_frame = time.monotonic()
         LOGGER.info("Camera driver=%s device=%s model=%s; human/object workers ready",
                     driver_name, camera_option["deviceId"], setting["model"]["name"])
         while not stopped():
+            poll_started = time.monotonic()
             captured_at, frame = capture.getFrame(timeout=CAMERA_POLL_SECONDS)
             now = time.monotonic()
             if frame is None:
@@ -62,8 +84,16 @@ def camera_prediction(setting: dict, stopped: Callable[[], bool]) -> Iterator[tu
                 pair = bus.wait_pair(CAMERA_POLL_SECONDS)
             if pair is None:
                 break
+            paired_at = time.monotonic()
             confidence = action.predict(packet, pair["human"], pair["object"])
-            elapsed = time.monotonic() - now
+            finished = time.monotonic()
+            elapsed = finished - now
+            performance.record({"capture_wait": now - poll_started,
+                                "frame_age_at_dispatch": now - captured_at,
+                                "keypoint_wait": paired_at - now,
+                                "action": finished - paired_at,
+                                "processing": elapsed,
+                                "capture_to_prediction": finished - captured_at})
             if now - last_log >= option["log_interval_seconds"]:
                 LOGGER.info("action=%s confidence=%.4f detected=%s inference_ms=%.1f",
                             option["action_name"], confidence, action.active, elapsed * 1000)

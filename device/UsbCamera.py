@@ -7,6 +7,8 @@ import time
 
 import cv2
 
+from geometric_hoi.performance import PerformanceWindow
+
 
 class _CameraHandleValidator:
     """Provide the handle validation API used by the sampling controller."""
@@ -113,15 +115,32 @@ class UsbCamera:
             self.handle = None
 
     def _videoThread(self):
+        performance = PerformanceWindow("camera", 1.0)
+        overwritten = failures = 0
+        reported_at = time.perf_counter()
         while self.runStatus >= 0:
             if self.runStatus != 10:
                 time.sleep(0.05)
                 continue
 
+            started = time.perf_counter()
             ok, frame = self.cap.read()
+            captured_at = time.monotonic()
+            read_seconds = time.perf_counter() - started
             if ok and frame is not None:
                 with self.condition:
-                    self.latest = (time.monotonic(), frame)
+                    overwritten += self.latest is not None
+                    self.latest = (captured_at, frame)
                     self.condition.notify()
+                performance.record({"read_decode": read_seconds})
             else:
+                failures += 1
                 time.sleep(0.02)
+            now = time.perf_counter()
+            if now - reported_at >= 1.0:
+                logging.getLogger(__name__).info(
+                    "performance camera_overwritten=%d read_failures=%d window_s=%.2f",
+                    overwritten, failures, now - reported_at,
+                )
+                overwritten = failures = 0
+                reported_at = now

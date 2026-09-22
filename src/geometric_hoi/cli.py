@@ -18,7 +18,7 @@ def main() -> None:
     configure_logging()
     try:
         setting = load_setting(arguments.config)
-        if arguments.command in {"engine", "train", "run"}:
+        if arguments.command in {"engine", "train"}:
             import torch
 
             device = torch.device(setting["model"]["device"])
@@ -44,9 +44,9 @@ def main() -> None:
 
             train(setting)
         else:
-            from .recognition.coordinator import run_camera
+            from .recognition.preview import run_preview
 
-            run_camera(setting)
+            run_preview(setting)
     except KeyboardInterrupt:
         logging.getLogger(__name__).info("Stopped by user")
     except Exception:
