@@ -8,6 +8,7 @@ import time
 import cv2
 
 from geometric_hoi.performance import PerformanceWindow
+from geometric_hoi.logging import PERF
 
 
 class _CameraHandleValidator:
@@ -138,7 +139,7 @@ class UsbCamera:
                 time.sleep(0.02)
             now = time.perf_counter()
             if now - reported_at >= 1.0:
-                logging.getLogger(__name__).info(
+                logging.getLogger(__name__).log(PERF,
                     "performance camera_overwritten=%d read_failures=%d window_s=%.2f",
                     overwritten, failures, now - reported_at,
                 )

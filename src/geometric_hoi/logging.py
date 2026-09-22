@@ -6,6 +6,10 @@ from datetime import datetime, timedelta, timezone
 from .setting import ROOT
 
 LOCAL_ZONE = timezone(timedelta(hours=8))
+PERF = 15
+LOG_LEVELS = {"DEBUG": logging.DEBUG, "PERF": PERF, "INFO": logging.INFO,
+              "WARNING": logging.WARNING, "ERROR": logging.ERROR, "CRITICAL": logging.CRITICAL}
+logging.addLevelName(PERF, "PERF")
 
 
 class DailyFileSink(logging.Handler):
@@ -26,12 +30,17 @@ class LocalFormatter(logging.Formatter):
         return datetime.fromtimestamp(record.created, LOCAL_ZONE).strftime("%Y-%m-%d %H:%M:%S +08:00")
 
 
-def configure_logging() -> None:
+def configure_logging(level: str = "INFO") -> None:
     """Install console and daily persistent logging."""
     (ROOT / "log").mkdir(exist_ok=True)
     formatter = LocalFormatter("[%(asctime)s] [%(levelname)s] [%(name)s] - %(message)s")
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(LOG_LEVELS[level])
+    for sink in root_logger.handlers[:]:
+        if isinstance(sink.formatter, LocalFormatter):
+            root_logger.removeHandler(sink)
+            sink.close()
     for sink in (logging.StreamHandler(), DailyFileSink()):
+        sink.setLevel(LOG_LEVELS[level])
         sink.setFormatter(formatter)
         root_logger.addHandler(sink)

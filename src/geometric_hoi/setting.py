@@ -12,6 +12,13 @@ def load_setting(path: Path) -> dict:
     """Validate user configuration at the application boundary."""
     with path.open("rb") as stream:
         setting = tomllib.load(stream)
+    from .logging import LOG_LEVELS
+
+    log_setting = setting.setdefault("logging", {})
+    level = log_setting.setdefault("level", "INFO")
+    if not isinstance(level, str) or level.upper() not in LOG_LEVELS:
+        raise ValueError(f"logging.level must be one of {', '.join(LOG_LEVELS)}")
+    log_setting["level"] = level.upper()
     model, feature, train, run = (setting[key] for key in ("model", "feature", "train", "run"))
     if model["name"] not in {"2g-gcn", "geovis-gnn"}:
         raise ValueError("model.name must be 2g-gcn or geovis-gnn")

@@ -10,6 +10,7 @@ import torch
 from ..recognition.engine import fingerprint
 from ..setting import ROOT, checkpoint_path
 from ..performance import PerformanceWindow
+from ..logging import PERF
 from .feature import AppearanceFeature, pack_clip
 from .model import CHECKPOINT_VERSION, ActionModel
 from .upstream import PATCH_VERSION, REVISION
@@ -54,7 +55,7 @@ class ActionPrediction:
         self.threshold = setting["run"]["threshold"]
         self.active = None
         self.performance = PerformanceWindow("action", setting["run"]["log_interval_seconds"])
-        LOGGER.info("Performance runtime: appearance=TensorRT FP16 action=PyTorch dtype=%s "
+        LOGGER.log(PERF, "Performance runtime: appearance=TensorRT FP16 action=PyTorch dtype=%s "
                     "window_frames=%d; stage timings are wall-clock including CPU transfers; "
                     "parallel human/object durations must not be summed",
                     next(self.network.parameters()).dtype, self.window_frames)

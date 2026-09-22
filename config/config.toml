@@ -1,3 +1,7 @@
+[logging]
+# DEBUG < PERF < INFO < WARNING < ERROR < CRITICAL
+level = "INFO"
+
 [model]
 # "2g-gcn" or "geovis-gnn"
 name = "2g-gcn"

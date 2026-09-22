@@ -18,6 +18,7 @@ def main() -> None:
     configure_logging()
     try:
         setting = load_setting(arguments.config)
+        configure_logging(setting["logging"]["level"])
         if arguments.command in {"engine", "train"}:
             import torch
 

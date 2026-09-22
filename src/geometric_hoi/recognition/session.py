@@ -4,7 +4,7 @@ import logging
 import time
 from queue import Full
 
-from ..logging import configure_logging
+from ..logging import PERF, configure_logging
 from ..performance import PerformanceWindow
 
 LOGGER = logging.getLogger(__name__)
@@ -13,7 +13,7 @@ MESSAGE_TIMEOUT_SECONDS = 0.1
 
 def run_recognition(setting: dict, stopped, mailbox, image_slots, slot_locks) -> None:
     """Own the inference runtime in a spawned process and publish bounded messages."""
-    configure_logging()
+    configure_logging(setting["logging"]["level"])
 
     def report_status(message: str) -> None:
         LOGGER.info(message)
@@ -75,7 +75,7 @@ def run_recognition(setting: dict, stopped, mailbox, image_slots, slot_locks) ->
                                 "queue_submit": finished - packed_at,
                                 "total": finished - started})
             if finished - reported_at >= setting["run"]["log_interval_seconds"]:
-                LOGGER.info("performance ipc_dropped=%d frame_bytes=%d window_s=%.2f",
+                LOGGER.log(PERF, "performance ipc_dropped=%d frame_bytes=%d window_s=%.2f",
                             dropped, frame.nbytes, finished - reported_at)
                 dropped = 0
                 reported_at = finished

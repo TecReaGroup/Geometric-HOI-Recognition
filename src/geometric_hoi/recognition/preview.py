@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
 
 from .session import run_recognition
+from ..logging import PERF
 from ..performance import PerformanceWindow
 
 LOGGER = logging.getLogger(__name__)
@@ -264,7 +265,7 @@ class PreviewWindow(QMainWindow):
         self.view.fps = self.fps_frame_count / elapsed
         with self.worker.lock:
             overwritten, self.worker.overwritten = self.worker.overwritten, 0
-        LOGGER.info("performance displayed_fps=%.2f preview_overwritten=%d window_s=%.2f",
+        LOGGER.log(PERF, "performance displayed_fps=%.2f preview_overwritten=%d window_s=%.2f",
                     self.view.fps, overwritten, elapsed)
         self.fps_started = now
         self.fps_frame_count = 0

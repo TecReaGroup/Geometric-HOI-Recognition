@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterator
 from importlib.util import module_from_spec, spec_from_file_location
 
 from ..setting import ROOT
+from ..logging import PERF
 from ..performance import PerformanceWindow
 
 LOGGER = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ def camera_prediction(
                                 "processing": elapsed,
                                 "capture_to_prediction": finished - captured_at})
             if now - last_log >= option["log_interval_seconds"]:
-                LOGGER.info("action=%s confidence=%.4f detected=%s inference_ms=%.1f",
+                LOGGER.log(PERF, "action=%s confidence=%.4f detected=%s inference_ms=%.1f",
                             option["action_name"], confidence, action.active, elapsed * 1000)
                 last_log = now
             yield frame, confidence, elapsed
