@@ -45,6 +45,8 @@ log/*
 # Keep directory placeholders if they are added to the repository.
 !data/**/.gitkeep
 
+package/
+
 # Large local audio/model assets and generated outputs
 data/audio/*
 !data/audio/.gitkeep

@@ -16,10 +16,10 @@ def load_setting(path: Path) -> dict:
         raise ValueError("model.name must be 2g-gcn or geovis-gnn")
     if model["hidden_size"] < 8 or model["hidden_size"] % 4:
         raise ValueError("model.hidden_size must be a positive multiple of four, >= 8")
-    if feature["pose_device"] not in {"cpu", "cuda"}:
-        raise ValueError("feature.pose_device must be cpu or cuda")
-    if feature["pose_size"] not in {"lightweight", "balanced", "performance"}:
-        raise ValueError("Invalid feature.pose_size")
+    if feature["person_detector"] != "yolo26m" or feature["person_pose"] != "rtmw-x":
+        raise ValueError("Human recognition requires yolo26m and rtmw-x")
+    if not model["device"].startswith("cuda") or feature["workspace_mb"] <= 0:
+        raise ValueError("TensorRT requires a CUDA device and positive workspace_mb")
     indexes = feature["object_point_index"]
     if len(indexes) != 2 or min(indexes) < 0 or indexes[0] == indexes[1]:
         raise ValueError("Two distinct nonnegative object_point_index values are required")
@@ -54,4 +54,4 @@ def configure_directory() -> None:
 
 def checkpoint_path(setting: dict) -> Path:
     """Return the selected model's independent checkpoint."""
-    return ROOT / "data" / "model" / f"{setting['model']['name']}.pt"
+    return ROOT / "data" / "model" / setting["model"]["name"] / "checkpoint.pt"

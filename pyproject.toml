@@ -6,7 +6,8 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy>=1.26,<3", "opencv-python>=4.10", "torch>=2.6,<3", "torchvision>=0.21,<1",
     "torch-geometric>=2.6", "ultralytics>=8.4", "rtmlib>=0.0.13",
-    "onnxruntime-gpu[cuda,cudnn]>=1.21,<1.27", "scipy>=1.14", "pillow>=11",
+    "onnxruntime-gpu[cuda,cudnn]==1.22.0", "scipy>=1.14", "pillow>=11",
+    "tensorrt-cu12==10.9.0.34", "onnx>=1.17,<1.19",
     "pyside6>=6.8,<7",
 ]
 

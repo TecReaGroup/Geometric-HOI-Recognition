@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .setting import ROOT
+from ..setting import ROOT
 
 LOGGER = logging.getLogger(__name__)
 REVISION = {

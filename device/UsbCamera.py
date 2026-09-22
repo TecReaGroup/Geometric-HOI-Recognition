@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """OpenCV driver for standard USB cameras."""
 
-import queue
+import logging
 import threading
 import time
 
@@ -34,7 +34,8 @@ class UsbCamera:
 
         self.cameraId = str(camera_index)
         self.runStatus = 0
-        self.frameQueue = queue.Queue(maxsize=3)
+        self.condition = threading.Condition()
+        self.latest = None
 
         backend_name = str(cameraConfig.get("backend", "dshow")).lower()
         backend_candidates = []
@@ -64,6 +65,11 @@ class UsbCamera:
         self.handle = self.cap
         self.cl = _CameraHandleValidator()
         self.backend = opened_backend
+        logging.getLogger(__name__).info(
+            "Camera ready backend=%s resolution=%dx%d fps=%.1f", opened_backend,
+            self.cap.get(cv2.CAP_PROP_FRAME_WIDTH), self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT),
+            self.cap.get(cv2.CAP_PROP_FPS),
+        )
 
         self.thread = threading.Thread(target=self._videoThread, daemon=True)
         self.thread.start()
@@ -91,13 +97,15 @@ class UsbCamera:
         self.runStatus = 1
 
     def getFrame(self, timeout=0.01):
-        try:
-            return self.frameQueue.get(timeout=timeout)
-        except queue.Empty:
-            return None, None
+        with self.condition:
+            self.condition.wait_for(lambda: self.latest is not None or self.runStatus < 0, timeout)
+            latest, self.latest = self.latest, None
+            return latest if latest is not None else (None, None)
 
     def stopThread(self):
         self.runStatus = -1
+        with self.condition:
+            self.condition.notify_all()
         if self.thread.is_alive():
             self.thread.join(timeout=2.0)
         if self.cap is not None:
@@ -114,15 +122,9 @@ class UsbCamera:
             started = time.perf_counter()
             ok, frame = self.cap.read()
             if ok and frame is not None:
-                if self.frameQueue.full():
-                    try:
-                        self.frameQueue.get_nowait()
-                    except queue.Empty:
-                        pass
-                try:
-                    self.frameQueue.put_nowait((time.time(), frame))
-                except queue.Full:
-                    pass
+                with self.condition:
+                    self.latest = (time.monotonic(), frame)
+                    self.condition.notify()
             else:
                 time.sleep(0.02)
 

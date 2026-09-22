@@ -8,14 +8,14 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from .dataset import build_dataset, weight_digest
-from .feature import FeatureExtractor
-from .model import ActionModel
-from .setting import ROOT, checkpoint_path
-from .upstream import PATCH_VERSION, REVISION
+from ..action.feature import FeatureExtractor
+from ..action.model import CHECKPOINT_VERSION, ActionModel
+from ..action.upstream import PATCH_VERSION, REVISION
+from ..recognition.engine import fingerprint as weight_digest
+from ..setting import ROOT, checkpoint_path
+from .dataset import build_dataset
 
 LOGGER = logging.getLogger(__name__)
-CHECKPOINT_VERSION = 1
 
 
 def train(setting: dict) -> None:

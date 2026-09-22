@@ -2,6 +2,7 @@
 
 import logging
 import threading
+import time
 
 import cv2
 from PySide6.QtCore import QRectF, Qt, QThread, QTimer, Signal
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
 LOGGER = logging.getLogger(__name__)
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 700
+FPS_UPDATE_SECONDS = 1.0
 
 
 class RecognitionThread(QThread):
@@ -32,7 +34,7 @@ class RecognitionThread(QThread):
 
     def run(self) -> None:
         """Load models and continuously publish actual model probabilities."""
-        from .runtime import camera_prediction
+        from .coordinator import camera_prediction
 
         try:
             for frame, probability, elapsed in camera_prediction(
@@ -55,6 +57,7 @@ class CameraView(QWidget):
         super().__init__()
         self.image = None
         self.probability = None
+        self.fps = 0.0
         self.action = setting["run"]["action_name"]
         self.threshold = setting["run"]["threshold"]
         self.setMinimumSize(640, 360)
@@ -109,6 +112,15 @@ class CameraView(QWidget):
         painter.setPen(QColor("#aab8c9"))
         painter.drawText(QRectF(40, 137, 280, 20), Qt.AlignmentFlag.AlignVCenter,
                          f"动作概率                         判定阈值 {self.threshold:.0%}")
+        fps_card = QRectF(self.width() - 160, 20, 140, 44)
+        painter.setPen(QPen(QColor(255, 255, 255, 35), 1))
+        painter.setBrush(QColor(17, 24, 34, 235))
+        painter.drawRoundedRect(fps_card, 10, 10)
+        font.setPixelSize(18)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(QColor("#e8edf5"))
+        painter.drawText(fps_card, Qt.AlignmentFlag.AlignCenter, f"FPS  {self.fps:.1f}")
         painter.end()
 
 
@@ -132,6 +144,8 @@ class PreviewWindow(QMainWindow):
         self.worker.finished.connect(self.finish_close)
         self.closing = False
         self.failure = None
+        self.fps_started = None
+        self.fps_frame_count = 0
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh_frame)
         self.timer.start(33)
@@ -140,6 +154,17 @@ class PreviewWindow(QMainWindow):
     def refresh_frame(self) -> None:
         """Display the newest inference output at a bounded refresh rate."""
         latest = self.worker.take_frame()
+        now = time.monotonic()
+        if latest is not None:
+            if self.fps_started is None:
+                self.fps_started = now
+            else:
+                self.fps_frame_count += 1
+        if self.fps_started is not None and now - self.fps_started >= FPS_UPDATE_SECONDS:
+            self.view.fps = self.fps_frame_count / (now - self.fps_started)
+            self.fps_started = now
+            self.fps_frame_count = 0
+            self.view.update()
         if latest is None:
             return
         self.view.image, self.view.probability, elapsed = latest
@@ -154,6 +179,9 @@ class PreviewWindow(QMainWindow):
         """Keep errors visible instead of presenting a stale probability as live."""
         self.failure = message
         self.view.probability = None
+        self.view.fps = 0.0
+        self.fps_started = None
+        self.fps_frame_count = 0
         self.worker.take_frame()
         self.view.update()
         self.statusBar().showMessage(f"识别已停止 · {message}")

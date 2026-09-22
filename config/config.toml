@@ -5,9 +5,10 @@ hidden_size = 128
 device = "cuda:0"
 
 [feature]
-object_weight = "data/model/best.pt"
-pose_device = "cuda"
-pose_size = "balanced"
+object_weight = "data/model/yolo26-pose/best.pt"
+person_detector = "yolo26m"
+person_pose = "rtmw-x"
+workspace_mb = 1024
 object_class = 0
 object_point_index = [0, 1]
 confidence = 0.3

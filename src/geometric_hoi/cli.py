@@ -11,14 +11,14 @@ from .setting import ROOT, configure_directory, load_setting
 def main() -> None:
     """Dispatch a complete application operation."""
     parser = argparse.ArgumentParser(description="Official 2G-GCN / GeoVis-GNN HOI recognition")
-    parser.add_argument("command", choices=("prepare", "train", "run"))
+    parser.add_argument("command", choices=("prepare", "engine", "train", "run"))
     parser.add_argument("--config", type=Path, default=ROOT / "config" / "config.toml")
     arguments = parser.parse_args()
     configure_directory()
     configure_logging()
     try:
         setting = load_setting(arguments.config)
-        if arguments.command in {"train", "run"}:
+        if arguments.command in {"engine", "train", "run"}:
             import torch
 
             device = torch.device(setting["model"]["device"])
@@ -31,16 +31,20 @@ def main() -> None:
                     torch.version.cuda, device, torch.cuda.get_device_name(device),
                 )
         if arguments.command == "prepare":
-            from .upstream import REVISION, prepare_source
+            from .action.upstream import REVISION, prepare_source
 
             for name in REVISION:
                 prepare_source(name)
+        elif arguments.command == "engine":
+            from .recognition.engine import prepare_engine
+
+            prepare_engine(setting)
         elif arguments.command == "train":
-            from .train import train
+            from .training.train import train
 
             train(setting)
         else:
-            from .runtime import run_camera
+            from .recognition.coordinator import run_camera
 
             run_camera(setting)
     except KeyboardInterrupt:

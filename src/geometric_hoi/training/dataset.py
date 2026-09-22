@@ -11,18 +11,12 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .feature import FeatureExtractor, pack_clip
-from .setting import ROOT
+from ..action.feature import FeatureExtractor, pack_clip
+from ..setting import ROOT
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_SUFFIX = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".webm"}
-FEATURE_VERSION = 1
-
-
-def weight_digest(path: Path) -> str:
-    """Fingerprint detector weights to invalidate stale feature caches."""
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+FEATURE_VERSION = 2
 
 
 def extract_video(path: Path, extractor: FeatureExtractor, setting: dict, fingerprint: str) -> Path:
