@@ -48,7 +48,7 @@ class ActionPrediction:
         self.appearance = AppearanceFeature(setting)
         self.window_frames = trained["train"]["window_frames"]
         self.infer = self.network
-        if trained["model"]["name"] == "2g-gcn":
+        if self.device.type == "cuda":
             self.infer = ActionReplay(self.network, self.window_frames,
                                      saved["object_point_count"], self.device)
         self.frames = deque(maxlen=self.window_frames)

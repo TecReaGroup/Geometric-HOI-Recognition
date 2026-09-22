@@ -1,4 +1,4 @@
-"""Fixed-window CUDA replay for the capture-compatible 2G-GCN network."""
+"""Fixed-window CUDA replay for action recognition networks."""
 
 import logging
 

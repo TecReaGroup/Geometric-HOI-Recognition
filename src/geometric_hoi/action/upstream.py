@@ -14,7 +14,7 @@ REVISION = {
     "geovis-gnn": ("https://github.com/tanqiu98/GeoVis-GNN.git", "839cc6462ea43bcc3249678fb8c2b6b7c6920c19"),
 }
 PATCH_VERSION = 3
-SOURCE_OPTIMIZATION_VERSION = 1
+SOURCE_OPTIMIZATION_VERSION = 3
 
 
 def prepare_source(name: str) -> Path:
@@ -47,7 +47,8 @@ def prepare_source(name: str) -> Path:
             source = source.replace("import pyrutils", f"import {namespace}.pyrutils")
         if relative == "vhoi/models.py":
             # Select the next segment end on-device; trailing frames keep their own state.
-            start = source.index("    batch_size = hx_s.size(0)", source.index("def reorder_hidden_states("))
+            state_function = "reorder_hidden_states" if name == "2g-gcn" else "hidden_transformation"
+            start = source.index("    batch_size = hx_s.size(0)", source.index(f"def {state_function}("))
             end = source.index("    return hx_s", start) + len("    return hx_s")
             source = source[:start] + (
                 "    steps = hx_s.size(1)\n"
@@ -72,20 +73,35 @@ def prepare_source(name: str) -> Path:
                 source = source.replace(old, "x_geometry = x_geometry.permute(0, 3, 2, 1).contiguous().view(bs, t, 1, -1)")
             else:
                 source = source.replace("num_steps=10", "num_steps = x_human.size(1)")
-                source = source.replace("return batch_wise_edges_stack.to(device)", "return batch_wise_edges_stack.to(human_geometry_feature.device)")
-                start = source.index("        batch_size = human_joints.shape[0]", source.index("    def get_valid_frame"))
-                end = source.index("    def get_graph", start)
-                source = source[:start] + (
-                    "        visible = human_joints.abs().sum(dim=-1) > 0\n"
-                    "        positions = torch.arange(1, human_joints.size(1) + 1, device=human_joints.device)\n"
-                    "        lengths = (visible * positions).amax(dim=1).tolist()\n"
-                    "        return visible.unsqueeze(-1).expand_as(human_joints), lengths\n\n"
-                ) + source[end:]
+                start = source.index("    def get_valid_frame(")
+                end = source.index("    def forward(", start)
+                source = source[:start] + source[end:]
+                for branch in ("human", "object"):
+                    source = source.replace(
+                        f"        valid_frame_{branch}, valid_index_list_{branch} = self.get_valid_frame({branch}_geometry)", "")
+                    source = source.replace(
+                        f"        {branch}_graph_edges = self.get_graph({branch}_geometry)", "")
+                    source = source.replace(
+                        f"self.masked_GCN({branch}_geometry, {branch}_graph_edges, valid_index_list_{branch})",
+                        f"self.masked_GCN({branch}_geometry)")
         if relative == "pyrutils/torch/models_2newgat.py":
-            # Preserve the singleton batch axis and mask each missing geometric frame.
-            source = source.replace("mask[:valid_step_index[batch], :, :] = 1",
-                                    "mask[:] = (x[batch].abs().sum(dim=-1, keepdim=True) > 0)")
-            source = source.replace(".unsqueeze(0)).squeeze()", ".unsqueeze(0)).squeeze(0)")
+            start = source.index("    def forward(self, x, edge_index, valid_step_index):")
+            end = source.index("class TemporalConv", start)
+            # Complete graphs plus GAT self-loops admit dense attention with identical weights.
+            source = source[:start] + (
+                "    def forward(self, x):\n"
+                "        visible = x.abs().sum(dim=-1, keepdim=True) > 0\n"
+                "        for index, conv in enumerate(self.convs):\n"
+                "            projected = conv.lin(x)\n"
+                "            source_score = (projected * conv.att_src.view(-1)).sum(dim=-1)\n"
+                "            target_score = (projected * conv.att_dst.view(-1)).sum(dim=-1)\n"
+                "            logits = target_score.unsqueeze(-1) + source_score.unsqueeze(-2)\n"
+                "            attention = F.leaky_relu(logits, conv.negative_slope).softmax(dim=-1)\n"
+                "            x = attention.matmul(projected) + conv.bias\n"
+                "            if index == 0:\n"
+                "                x = F.dropout(F.gelu(x), p=0.2, training=self.training)\n"
+                "        return self.fuse_conv(x * visible)\n\n\n"
+            ) + source[end:]
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")

@@ -62,12 +62,22 @@ def extract_video(path: Path, extractor: FeatureExtractor, setting: dict, finger
 
 
 class ClipDataset(Dataset):
-    """Load only the requested feature window from a source video."""
+    """Slice feature windows from videos decompressed once per dataset."""
 
     def __init__(self, entries: list[dict], setting: dict) -> None:
         """Store split windows and their feature contract."""
         self.entries = entries
         self.setting = setting
+        self.video_features = {}
+        for entry in entries:
+            cache = entry["cache"]
+            if cache not in self.video_features:
+                with np.load(cache, allow_pickle=False) as archive:
+                    self.video_features[cache] = {key: archive[key] for key in
+                                                  ("human_point", "object_point", "appearance", "timestamp")}
+        feature_bytes = sum(array.nbytes for video in self.video_features.values() for array in video.values())
+        LOGGER.info("Loaded feature cache videos=%d windows=%d memory_mb=%.1f",
+                    len(self.video_features), len(entries), feature_bytes / (1024 * 1024))
 
     def __len__(self) -> int:
         """Return the number of windows."""
@@ -78,9 +88,7 @@ class ClipDataset(Dataset):
         entry = self.entries[index]
         start = entry["start"]
         stop = start + self.setting["train"]["window_frames"]
-        with np.load(entry["cache"], allow_pickle=False) as archive:
-            observation = {key: archive[key][start:stop] for key in
-                           ("human_point", "object_point", "appearance", "timestamp")}
+        observation = {key: array[start:stop] for key, array in self.video_features[entry["cache"]].items()}
         human, object_feature = pack_clip(observation, self.setting)
         return torch.from_numpy(human), torch.from_numpy(object_feature), entry["label"]
 

@@ -1,10 +1,10 @@
 [logging]
 # DEBUG < PERF < INFO < WARNING < ERROR < CRITICAL
-level = "INFO"
+level = "PERF"
 
 [model]
 # "2g-gcn" or "geovis-gnn"
-name = "2g-gcn"
+name = "geovis-gnn"
 hidden_size = 128
 device = "cuda:0"
 
@@ -38,6 +38,6 @@ deviceId = 0
 backend = "dshow"
 colorImageSizeX = 1920
 colorImageSizeY = 1080
-fps = 30
+fps = 20
 fourcc = "MJPG"
 timeout_seconds = 5.0
