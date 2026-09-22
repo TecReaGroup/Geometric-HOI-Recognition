@@ -166,9 +166,12 @@ def load_rtmw(setting: dict) -> RTMPose:
 
 
 def prepare_engine(setting: dict) -> None:
-    """Build the three recognition engines without opening a camera."""
+    """Build recognition and appearance engines without opening a camera."""
+    from ..action.appearance import appearance_engine
+
     load_runtime()
     yolo_engine(person_detector_weight(), setting)
     yolo_engine(ROOT / setting["feature"]["object_weight"], setting)
     load_rtmw(setting)
-    LOGGER.info("YOLO26m, RTMW-X and YOLO26-pose engines are ready")
+    appearance_engine(setting)
+    LOGGER.info("YOLO26m, RTMW-X, YOLO26-pose and ResNet50 engines are ready")

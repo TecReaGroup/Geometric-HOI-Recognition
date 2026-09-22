@@ -9,7 +9,8 @@ from ultralytics import YOLO
 
 from ..setting import ROOT
 from ..performance import PerformanceWindow
-from .engine import INPUT_SIZE, load_rtmw, person_detector_weight, yolo_engine
+from .engine import load_rtmw, person_detector_weight, yolo_engine
+from .yolo import YoloFrame
 
 
 @dataclass(frozen=True)
@@ -33,7 +34,10 @@ class HumanKeypoint:
     def __init__(self, setting: dict) -> None:
         self.device = setting["model"]["device"]
         self.threshold = setting["feature"]["confidence"]
-        self.detector = YOLO(str(yolo_engine(person_detector_weight(), setting)), task="detect")
+        self.detector = YoloFrame(
+            YOLO(str(yolo_engine(person_detector_weight(), setting)), task="detect"),
+            self.device, self.threshold, 0,
+        )
         self.pose = load_rtmw(setting)
         self.center = None
         self.performance = PerformanceWindow("human", setting["run"]["log_interval_seconds"])
@@ -42,9 +46,7 @@ class HumanKeypoint:
     def estimate(self, frame: np.ndarray) -> KeypointObservation:
         """Return only the selected person's whole-body keypoints and box."""
         started = time.perf_counter()
-        prediction = self.detector.predict(frame, device=self.device, classes=[0],
-                                           conf=self.threshold, imgsz=INPUT_SIZE,
-                                           rect=False, verbose=False)[0]
+        prediction = self.detector.predict(frame)
         boxes = prediction.boxes.xyxy.cpu().numpy()
         detected_at = time.perf_counter()
         point = np.zeros((133, 3), dtype=np.float32)
@@ -82,7 +84,8 @@ class ObjectKeypoint:
             raise ValueError("Object class is absent from the pose weight")
         self.point_count = int(shape[0])
         del source
-        self.pose = YOLO(str(yolo_engine(weight, setting)), task="pose")
+        self.pose = YoloFrame(YOLO(str(yolo_engine(weight, setting)), task="pose"),
+                              self.device, self.option["confidence"], self.option["object_class"])
         self.center = None
         self.performance = PerformanceWindow("object", setting["run"]["log_interval_seconds"])
 
@@ -90,10 +93,7 @@ class ObjectKeypoint:
     def estimate(self, frame: np.ndarray) -> KeypointObservation:
         """Return normalized object keypoints and their corresponding crop box."""
         started = time.perf_counter()
-        prediction = self.pose.predict(
-            frame, device=self.device, verbose=False, imgsz=INPUT_SIZE, rect=False,
-            conf=self.option["confidence"], classes=[self.option["object_class"]],
-        )[0]
+        prediction = self.pose.predict(frame)
         point = np.zeros((self.point_count, 3), dtype=np.float32)
         boxes = prediction.boxes.xyxy.cpu().numpy()
         detected_at = time.perf_counter()

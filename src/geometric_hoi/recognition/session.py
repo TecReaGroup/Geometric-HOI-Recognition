@@ -11,7 +11,7 @@ LOGGER = logging.getLogger(__name__)
 MESSAGE_TIMEOUT_SECONDS = 0.1
 
 
-def run_recognition(setting: dict, stopped, mailbox) -> None:
+def run_recognition(setting: dict, stopped, mailbox, image_slots, slot_locks) -> None:
     """Own the inference runtime in a spawned process and publish bounded messages."""
     configure_logging()
 
@@ -26,8 +26,8 @@ def run_recognition(setting: dict, stopped, mailbox) -> None:
 
     try:
         report_status("正在导入推理依赖…")
-        import cv2
         import torch
+        import numpy as np
 
         from .coordinator import camera_prediction
 
@@ -48,23 +48,35 @@ def run_recognition(setting: dict, stopped, mailbox) -> None:
             setting, stopped.is_set, report_status
         ):
             started = time.perf_counter()
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            converted_at = time.perf_counter()
-            pixels = rgb.tobytes()
+            if frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[2] != 3:
+                raise ValueError("Preview requires a uint8 BGR frame")
+            if frame.nbytes > len(image_slots[0]):
+                raise ValueError("Actual camera frame exceeds configured shared preview capacity")
+            slot = next((index for index, lock in enumerate(slot_locks) if lock.acquire(False)), None)
             packed_at = time.perf_counter()
-            try:
-                mailbox.put_nowait(("frame", (pixels, rgb.shape[1], rgb.shape[0],
-                                              rgb.strides[0], probability, elapsed, packed_at)))
-            except Full:
+            if slot is None:
                 dropped += 1
+            else:
+                try:
+                    destination = np.frombuffer(image_slots[slot], dtype=np.uint8,
+                                                count=frame.size).reshape(frame.shape)
+                    np.copyto(destination, frame)
+                    packed_at = time.perf_counter()
+                    mailbox.put_nowait(("frame", (slot, frame.shape[1], frame.shape[0],
+                                                  frame.shape[1] * 3, probability, elapsed, packed_at)))
+                except Full:
+                    slot_locks[slot].release()
+                    dropped += 1
+                except BaseException:
+                    slot_locks[slot].release()
+                    raise
             finished = time.perf_counter()
-            performance.record({"color_convert": converted_at - started,
-                                "to_bytes": packed_at - converted_at,
+            performance.record({"shared_copy": packed_at - started,
                                 "queue_submit": finished - packed_at,
                                 "total": finished - started})
             if finished - reported_at >= setting["run"]["log_interval_seconds"]:
                 LOGGER.info("performance ipc_dropped=%d frame_bytes=%d window_s=%.2f",
-                            dropped, len(pixels), finished - reported_at)
+                            dropped, frame.nbytes, finished - reported_at)
                 dropped = 0
                 reported_at = finished
     except Exception as exc:

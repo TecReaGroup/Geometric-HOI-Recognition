@@ -6,7 +6,7 @@ import threading
 import time
 from queue import Empty
 
-from PySide6.QtCore import QRectF, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QRectF, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
 
@@ -19,6 +19,7 @@ WINDOW_HEIGHT = 700
 FPS_UPDATE_SECONDS = 1.0
 PROCESS_POLL_SECONDS = 0.1
 SHUTDOWN_GRACE_SECONDS = 3.0
+PREVIEW_SLOT_COUNT = 3
 
 
 class RecognitionThread(QThread):
@@ -26,6 +27,7 @@ class RecognitionThread(QThread):
 
     failed = Signal(str)
     status_changed = Signal(str)
+    frame_ready = Signal()
 
     def __init__(self, setting: dict) -> None:
         super().__init__()
@@ -45,8 +47,14 @@ class RecognitionThread(QThread):
         context = multiprocessing.get_context("spawn")
         stopped = context.Event()
         mailbox = context.Queue(maxsize=2)
+        camera = self.setting["camera"]
+        capacity = camera["colorImageSizeX"] * camera["colorImageSizeY"] * 3
+        image_slots = [context.RawArray("B", capacity) for _ in range(PREVIEW_SLOT_COUNT)]
+        slot_locks = [context.Lock() for _ in image_slots]
+        LOGGER.info("Preview transport=shared_memory slots=%d bytes_per_slot=%d",
+                    PREVIEW_SLOT_COUNT, capacity)
         inference = context.Process(target=run_recognition,
-                                    args=(self.setting, stopped, mailbox),
+                                    args=(self.setting, stopped, mailbox, image_slots, slot_locks),
                                     name="hoi-recognition")
         started = False
         performance = PerformanceWindow("preview_receive", self.setting["run"]["log_interval_seconds"])
@@ -71,12 +79,21 @@ class RecognitionThread(QThread):
                 if kind == "status":
                     self.status_changed.emit(payload)
                     continue
-                pixels, width, height, stride, probability, elapsed, published_at = payload
+                slot, width, height, stride, probability, elapsed, published_at = payload
                 received_at = time.perf_counter()
-                image = QImage(pixels, width, height, stride, QImage.Format.Format_RGB888).copy()
+                try:
+                    pixels = memoryview(image_slots[slot]).cast("B")[:height * stride]
+                    image = QImage(pixels, width, height, stride, QImage.Format.Format_BGR888).copy()
+                finally:
+                    # The GUI owns the copy before the producer can reuse this slot.
+                    slot_locks[slot].release()
                 with self.lock:
+                    notify = self.latest is None
                     self.overwritten += self.latest is not None
                     self.latest = image, probability, elapsed, time.perf_counter()
+                # One queued notification covers all frames until the mailbox is consumed.
+                if notify:
+                    self.frame_ready.emit()
                 performance.record({"ipc_latency": received_at - published_at,
                                     "image_copy": time.perf_counter() - received_at})
         except Exception as exc:
@@ -193,14 +210,15 @@ class PreviewWindow(QMainWindow):
         self.worker.failed.connect(self.show_failure)
         self.worker.status_changed.connect(self.show_status)
         self.worker.finished.connect(self.finish_close)
+        self.worker.frame_ready.connect(self.refresh_frame, Qt.ConnectionType.QueuedConnection)
         self.closing = False
         self.failure = None
         self.fps_started = None
         self.fps_frame_count = 0
         self.performance = PerformanceWindow("preview_consume", setting["run"]["log_interval_seconds"])
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh_frame)
-        self.timer.start(max(1, int(1000 / setting["camera"]["fps"])))
+        self.timer.timeout.connect(self.refresh_fps)
+        self.timer.start(int(FPS_UPDATE_SECONDS * 1000))
         QTimer.singleShot(0, self.start_recognition)
 
     def start_recognition(self) -> None:
@@ -213,26 +231,19 @@ class PreviewWindow(QMainWindow):
         if not self.closing and self.failure is None:
             self.statusBar().showMessage(message)
 
+    @Slot()
     def refresh_frame(self) -> None:
-        """Display the newest inference output at a bounded refresh rate."""
+        """Consume a coalesced arrival notification on the GUI thread."""
+        if self.closing or self.failure is not None:
+            return
         latest = self.worker.take_frame()
-        now = time.monotonic()
-        if latest is not None:
-            if self.fps_started is None:
-                self.fps_started = now
-            else:
-                self.fps_frame_count += 1
-        if self.fps_started is not None and now - self.fps_started >= FPS_UPDATE_SECONDS:
-            self.view.fps = self.fps_frame_count / (now - self.fps_started)
-            with self.worker.lock:
-                overwritten, self.worker.overwritten = self.worker.overwritten, 0
-            LOGGER.info("performance displayed_fps=%.2f preview_overwritten=%d window_s=%.2f",
-                        self.view.fps, overwritten, now - self.fps_started)
-            self.fps_started = now
-            self.fps_frame_count = 0
-            self.view.update()
         if latest is None:
             return
+        now = time.perf_counter()
+        if self.fps_started is None:
+            self.fps_started = now
+        else:
+            self.fps_frame_count += 1
         self.view.image, self.view.probability, elapsed, received_at = latest
         self.performance.record({"mailbox_wait": time.perf_counter() - received_at})
         self.view.update()
@@ -241,6 +252,23 @@ class PreviewWindow(QMainWindow):
                 f"持续识别 · {self.model_name}  |  推理 {elapsed * 1000:.0f} ms  |  "
                 f"处理能力 {1 / max(elapsed, 1e-6):.1f} FPS  |  Q / Esc 退出"
             )
+
+    def refresh_fps(self) -> None:
+        """Report consumption throughput independently of frame delivery."""
+        if self.fps_started is None:
+            return
+        now = time.perf_counter()
+        elapsed = now - self.fps_started
+        if elapsed < FPS_UPDATE_SECONDS:
+            return
+        self.view.fps = self.fps_frame_count / elapsed
+        with self.worker.lock:
+            overwritten, self.worker.overwritten = self.worker.overwritten, 0
+        LOGGER.info("performance displayed_fps=%.2f preview_overwritten=%d window_s=%.2f",
+                    self.view.fps, overwritten, elapsed)
+        self.fps_started = now
+        self.fps_frame_count = 0
+        self.view.update()
 
     def show_failure(self, message: str) -> None:
         """Keep errors visible instead of presenting a stale probability as live."""

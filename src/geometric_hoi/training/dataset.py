@@ -16,7 +16,7 @@ from ..setting import ROOT
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_SUFFIX = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".webm"}
-FEATURE_VERSION = 3
+FEATURE_VERSION = 4
 
 
 def extract_video(path: Path, extractor: FeatureExtractor, setting: dict, fingerprint: str) -> Path:
