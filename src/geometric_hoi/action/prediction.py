@@ -18,28 +18,44 @@ from .replay import ActionReplay
 LOGGER = logging.getLogger(__name__)
 
 
+def validate_checkpoint(saved: dict, setting: dict) -> None:
+    """Reject obsolete checkpoints before constructing inference models."""
+    retrain = "请使用当前配置执行 make train 重新训练动作识别模型。"
+    try:
+        trained = saved["setting"]
+        model_name = trained["model"]["name"]
+        trained["model"]["hidden_size"]
+        trained["train"]["window_frames"]
+        saved["object_point_count"]
+        saved["state_dict"]
+        digest = saved["object_weight_digest"]
+        contracts = [
+            (section, key, trained["recognition"][section][key])
+            for section, keys in (("object", ("object_class", "object_point")),
+                                  ("human", ("confidence", "person_detector", "person_pose")))
+            for key in keys
+        ]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"动作识别检查点格式已过期或不完整（缺失或无效字段：{exc}）。{retrain}") from exc
+    if model_name != setting["model"]["name"]:
+        raise ValueError(f"动作识别检查点的模型类型与当前配置不一致。{retrain}")
+    for section, key, trained_value in contracts:
+        if trained_value != setting["recognition"][section][key]:
+            raise ValueError(f"recognition.{section}.{key} 与训练时不一致。{retrain}")
+    if digest != fingerprint(ROOT / setting["recognition"]["object"]["object_weight"]):
+        raise ValueError(f"目标姿态 PT 文件与训练时不一致（权重或元数据已变化）。{retrain}")
+
+
 class ActionPrediction:
     """Consume aligned observations through the trained action feature contract."""
 
     def __init__(self, setting: dict) -> None:
         path = checkpoint_path(setting)
         if not path.is_file():
-            raise FileNotFoundError(f"Train {setting['model']['name']} first; missing {path}")
+            raise FileNotFoundError(f"缺少动作识别检查点 {path}，请使用当前配置执行 make train。")
         saved = torch.load(path, map_location="cpu", weights_only=True)
+        validate_checkpoint(saved, setting)
         trained = saved["setting"]
-        if trained["model"]["name"] != setting["model"]["name"]:
-            raise ValueError("Checkpoint model does not match configuration")
-        for section, keys in (("object", ("object_class", "object_point")),
-                              ("human", ("confidence", "person_detector", "person_pose"))):
-            for key in keys:
-                if trained["recognition"][section].get(key) != setting["recognition"][section][key]:
-                    raise ValueError(
-                        f"recognition.{section}.{key} differs from training; restore it or retrain"
-                    )
-        if saved["object_weight_digest"] != fingerprint(
-            ROOT / setting["recognition"]["object"]["object_weight"]
-        ):
-            raise ValueError("Object pose weights changed since training; retrain")
         trained["model"]["device"] = setting["model"]["device"]
         self.setting = trained
         self.device = torch.device(setting["model"]["device"])
