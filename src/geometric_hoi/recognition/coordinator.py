@@ -22,6 +22,7 @@ def camera_prediction(
     from .engine import load_runtime
     from .keypoint import HumanKeypoint, ObjectKeypoint
     from .worker import KeypointWorker
+    from .overlay import PoseOverlay
 
     if stopped():
         return
@@ -39,6 +40,9 @@ def camera_prediction(
         return
     report_status("正在加载物体关键点模型…")
     object_estimator = ObjectKeypoint(setting)
+    if setting["view"]["tip_point_index"] >= object_estimator.point_count:
+        raise ValueError("view.tip_point_index exceeds the object pose keypoint count")
+    overlay = PoseOverlay(setting)
     if stopped():
         return
     bus = FrameBus()
@@ -99,7 +103,9 @@ def camera_prediction(
                 LOGGER.log(PERF, "action=%s confidence=%.4f detected=%s inference_ms=%.1f",
                             option["action_name"], confidence, action.active, elapsed * 1000)
                 last_log = now
-            yield frame, confidence, elapsed
+            annotation = overlay.snapshot(pair["human"], pair["object"], confidence >= option["threshold"],
+                                          finished, frame.shape)
+            yield frame, confidence, elapsed, annotation
     finally:
         bus.close()
         for worker in workers:

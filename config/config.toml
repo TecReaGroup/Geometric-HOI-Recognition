@@ -1,6 +1,13 @@
 [logging]
 # DEBUG < PERF < INFO < WARNING < ERROR < CRITICAL
-level = "PERF"
+level = "INFO"
+
+[view]
+hand_skeleton = false
+yolo_pose_keypoint = false
+yolo_pose_box = false
+tip_trajectory = true
+tip_point_index = 0
 
 [model]
 # "2g-gcn" or "geovis-gnn"
@@ -8,29 +15,32 @@ name = "geovis-gnn"
 hidden_size = 128
 device = "cuda:0"
 
-[feature]
-object_weight = "data/model/yolo26-pose/best.pt"
-person_detector = "yolo26m"
-person_pose = "rtmw-x"
-workspace_mb = 1024
-object_class = 0
-object_point_index = [0, 1]
-confidence = 0.3
-
 [train]
 video_dir = "data/video"
+resample_fps = 20.0
 window_frames = 16
 stride_frames = 8
 validation_fraction = 0.2
-epochs = 40
+epochs = 15
 batch_size = 8
 learning_rate = 0.0001
 seed = 42
 
 [run]
 action_name = "target_action"
-threshold = 0.5
+threshold = 0.7
 log_interval_seconds = 1.0
+
+[recognition.object]
+object_weight = "data/model/yolo26-pose/best.pt"
+object_class = "pen"
+object_point = ["tip", "tail"]
+
+[recognition.human]
+person_detector = "yolo26m"
+person_pose = "rtmw-x"
+workspace_mb = 1024
+confidence = 0.43
 
 [camera]
 driver = "UsbCamera"

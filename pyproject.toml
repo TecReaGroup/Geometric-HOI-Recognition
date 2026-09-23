@@ -9,6 +9,7 @@ dependencies = [
     "onnxruntime-gpu[cuda,cudnn]==1.22.0", "scipy>=1.14", "pillow>=11",
     "tensorrt-cu12==10.9.0.34", "onnx>=1.17,<1.19",
     "pyside6>=6.8,<7",
+    "cv2-enumerate-cameras>=1.3.3,<2",
 ]
 
 [project.scripts]

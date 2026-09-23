@@ -16,14 +16,15 @@ from ..setting import ROOT
 
 LOGGER = logging.getLogger(__name__)
 VIDEO_SUFFIX = {".mp4", ".avi", ".mov", ".mkv", ".m4v", ".webm"}
-FEATURE_VERSION = 4
 
 
 def extract_video(path: Path, extractor: FeatureExtractor, setting: dict, fingerprint: str) -> Path:
-    """Decode every frame and persist features with source timestamps."""
+    """Cap sampling FPS and persist selected features with source timestamps."""
     stamp = path.stat()
+    resample_fps = setting["train"]["resample_fps"]
     signature = json.dumps([str(path.resolve()), stamp.st_size, stamp.st_mtime_ns,
-                            setting["feature"], fingerprint, FEATURE_VERSION], sort_keys=True)
+                            setting["recognition"], resample_fps, fingerprint],
+                           sort_keys=True)
     cache = ROOT / "temp" / "feature" / (hashlib.sha256(signature.encode()).hexdigest() + ".npz")
     if cache.exists():
         return cache
@@ -35,15 +36,23 @@ def extract_video(path: Path, extractor: FeatureExtractor, setting: dict, finger
         fps = capture.get(cv2.CAP_PROP_FPS)
         if not capture.isOpened() or not np.isfinite(fps) or fps <= 0:
             raise ValueError(f"Cannot decode video or determine FPS: {path}")
+        sample_fps = min(fps, resample_fps)
+        LOGGER.info("Video sampling %s source_fps=%.3f sample_fps=%.3f",
+                    path.name, fps, sample_fps)
         frame_index = 0
+        next_sample_index = 0
         while True:
             available, frame = capture.read()
             if not available:
                 break
             timestamp = frame_index / fps
             frame_index += 1
+            if frame_index - 1 < next_sample_index:
+                continue
             observations.append(extractor.extract(frame))
             timestamps.append(timestamp)
+            # Select the nearest source frame to each uniform sampling instant.
+            next_sample_index = int(len(observations) * fps / sample_fps + 0.5)
             if len(observations) % 100 == 0:
                 LOGGER.info("Extracting %s frames=%d", path.name, len(observations))
     finally:

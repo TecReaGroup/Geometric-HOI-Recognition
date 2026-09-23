@@ -6,11 +6,12 @@ import threading
 import time
 from queue import Empty
 
-from PySide6.QtCore import QRectF, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
+from PySide6.QtCore import QPointF, QRectF, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget
 
 from .session import run_recognition
+from .overlay import TRAJECTORY_TIMEOUT_SECONDS
 from ..logging import PERF
 from ..performance import PerformanceWindow
 
@@ -21,6 +22,12 @@ FPS_UPDATE_SECONDS = 1.0
 PROCESS_POLL_SECONDS = 0.1
 SHUTDOWN_GRACE_SECONDS = 3.0
 PREVIEW_SLOT_COUNT = 3
+HAND_COLORS = ("#71b7ff", "#b8a1ff")
+POSE_COLOR = "#ffcf70"
+TRAIL_COLOR = "#46d99b"
+HAND_EDGES = tuple((start, end) for base in (1, 5, 9, 13, 17)
+                   for start, end in ((0, base), (base, base + 1),
+                                      (base + 1, base + 2), (base + 2, base + 3)))
 
 
 class RecognitionThread(QThread):
@@ -80,7 +87,7 @@ class RecognitionThread(QThread):
                 if kind == "status":
                     self.status_changed.emit(payload)
                     continue
-                slot, width, height, stride, probability, elapsed, published_at = payload
+                slot, width, height, stride, probability, elapsed, published_at, annotation = payload
                 received_at = time.perf_counter()
                 try:
                     pixels = memoryview(image_slots[slot]).cast("B")[:height * stride]
@@ -91,7 +98,7 @@ class RecognitionThread(QThread):
                 with self.lock:
                     notify = self.latest is None
                     self.overwritten += self.latest is not None
-                    self.latest = image, probability, elapsed, time.perf_counter()
+                    self.latest = image, probability, elapsed, time.perf_counter(), annotation
                 # One queued notification covers all frames until the mailbox is consumed.
                 if notify:
                     self.frame_ready.emit()
@@ -124,8 +131,110 @@ class CameraView(QWidget):
         self.fps = 0.0
         self.action = setting["run"]["action_name"]
         self.threshold = setting["run"]["threshold"]
+        self.option = setting["view"]
+        self.annotation = None
+        self.trail_timer = QTimer(self)
+        self.trail_timer.setSingleShot(True)
+        self.trail_timer.timeout.connect(self.expire_trail)
         self.performance = PerformanceWindow("preview_paint", setting["run"]["log_interval_seconds"])
         self.setMinimumSize(640, 360)
+
+    def accept_annotation(self, annotation: dict) -> None:
+        """Expire retained trails even when inference stops delivering frames."""
+        self.annotation = annotation
+        self.trail_timer.stop()
+        last_seen = annotation["last_seen"]
+        if last_seen is not None:
+            remaining = TRAJECTORY_TIMEOUT_SECONDS - (time.perf_counter() - last_seen)
+            if remaining <= 0:
+                annotation["trail"] = ()
+            else:
+                self.trail_timer.start(max(1, int(remaining * 1000) + 1))
+
+    def expire_trail(self) -> None:
+        """Remove stale paths independently of the frame refresh rate."""
+        if self.annotation is not None:
+            self.annotation["trail"] = ()
+            self.update()
+
+    def draw_annotation(self, painter: QPainter, bounds: QRectF) -> None:
+        """Map normalized observations into the letterboxed video rectangle."""
+        if self.annotation is None:
+            return
+
+        def position(point) -> QPointF:
+            return QPointF(bounds.x() + point[0] * bounds.width(),
+                           bounds.y() + point[1] * bounds.height())
+
+        painter.save()
+        painter.setClipRect(bounds)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        box = self.annotation["box"]
+        if box is not None:
+            painter.setPen(QPen(QColor(POSE_COLOR), 1.5))
+            painter.drawRoundedRect(QRectF(position(box[:2]), position(box[2:])), 5, 5)
+        for hand, color in zip(self.annotation["hand"], HAND_COLORS):
+            painter.setPen(QPen(QColor(color), 1.8))
+            for start, end in HAND_EDGES:
+                if hand[start][2] > 0 and hand[end][2] > 0:
+                    painter.drawLine(position(hand[start]), position(hand[end]))
+            painter.setBrush(QColor(color))
+            for point in hand:
+                if point[2] > 0:
+                    painter.drawEllipse(position(point), 2.5, 2.5)
+        trail = self.annotation["trail"]
+        if trail:
+            path = QPainterPath()
+            for index, point in enumerate(trail):
+                if index == 0 or not point[2]:
+                    path.moveTo(position(point))
+                else:
+                    path.lineTo(position(point))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            pen = QPen(QColor(70, 217, 155, 45), 7)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPath(path)
+            pen.setColor(QColor(TRAIL_COLOR))
+            pen.setWidthF(2.2)
+            painter.setPen(pen)
+            painter.drawPath(path)
+            painter.setBrush(QColor(TRAIL_COLOR))
+            painter.drawEllipse(position(trail[-1]), 4, 4)
+        painter.setPen(QPen(QColor("#17212e"), 1.5))
+        for index, point in enumerate(self.annotation["keypoint"]):
+            if point[2] > 0:
+                tip = index == self.option["tip_point_index"]
+                painter.setBrush(QColor(TRAIL_COLOR if tip else POSE_COLOR))
+                painter.drawEllipse(position(point), 4.5 if tip else 3.5, 4.5 if tip else 3.5)
+        painter.restore()
+
+    def draw_legend(self, painter: QPainter) -> None:
+        """Show only enabled layers in a compact bottom legend."""
+        entries = [(label, color) for key, label, color in (
+            ("hand_skeleton", "手部骨架", HAND_COLORS[0]),
+            ("yolo_pose_keypoint", "物体关键点", POSE_COLOR),
+            ("yolo_pose_box", "物体框", POSE_COLOR),
+            ("tip_trajectory", "Tip 轨迹", TRAIL_COLOR),
+        ) if self.option[key]]
+        if not entries:
+            return
+        font = QFont("Microsoft YaHei")
+        font.setPixelSize(12)
+        painter.setFont(font)
+        card = QRectF(20, self.height() - 54, len(entries) * 112 + 16, 34)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(17, 24, 34, 220))
+        painter.drawRoundedRect(card, 10, 10)
+        for index, (label, color) in enumerate(entries):
+            x = 36 + index * 112
+            painter.setBrush(QColor(color))
+            painter.drawEllipse(QPointF(x, card.center().y()), 3, 3)
+            painter.setPen(QColor("#d5deea"))
+            painter.drawText(QRectF(x + 10, card.y(), 94, 34),
+                             Qt.AlignmentFlag.AlignVCenter, label)
+            painter.setPen(Qt.PenStyle.NoPen)
 
     def paintEvent(self, event) -> None:
         """Draw an unclipped video and a high-contrast probability indicator."""
@@ -139,6 +248,8 @@ class CameraView(QWidget):
             bounds = QRectF((self.width() - size.width()) / 2,
                             (self.height() - size.height()) / 2, size.width(), size.height())
             painter.drawImage(bounds, self.image)
+            self.draw_annotation(painter, bounds)
+            self.draw_legend(painter)
         card = QRectF(20, 20, 320, 152)
         painter.setPen(QPen(QColor(255, 255, 255, 35), 1))
         painter.setBrush(QColor(17, 24, 34, 235))
@@ -245,7 +356,8 @@ class PreviewWindow(QMainWindow):
             self.fps_started = now
         else:
             self.fps_frame_count += 1
-        self.view.image, self.view.probability, elapsed, received_at = latest
+        self.view.image, self.view.probability, elapsed, received_at, annotation = latest
+        self.view.accept_annotation(annotation)
         self.performance.record({"mailbox_wait": time.perf_counter() - received_at})
         self.view.update()
         if self.failure is None:
@@ -275,6 +387,8 @@ class PreviewWindow(QMainWindow):
         """Keep errors visible instead of presenting a stale probability as live."""
         self.failure = message
         self.view.probability = None
+        self.view.trail_timer.stop()
+        self.view.annotation = None
         self.view.fps = 0.0
         self.fps_started = None
         self.fps_frame_count = 0

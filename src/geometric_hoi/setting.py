@@ -19,22 +19,39 @@ def load_setting(path: Path) -> dict:
     if not isinstance(level, str) or level.upper() not in LOG_LEVELS:
         raise ValueError(f"logging.level must be one of {', '.join(LOG_LEVELS)}")
     log_setting["level"] = level.upper()
-    model, feature, train, run = (setting[key] for key in ("model", "feature", "train", "run"))
+    view = setting.setdefault("view", {})
+    for key in ("hand_skeleton", "yolo_pose_keypoint", "yolo_pose_box", "tip_trajectory"):
+        if not isinstance(view.setdefault(key, True), bool):
+            raise ValueError(f"view.{key} must be a boolean")
+    tip_index = view.setdefault("tip_point_index", 0)
+    if type(tip_index) is not int or tip_index < 0:
+        raise ValueError("view.tip_point_index must be a nonnegative integer")
+    model, train, run = (setting[key] for key in ("model", "train", "run"))
+    human = setting["recognition"]["human"]
+    target = setting["recognition"]["object"]
     if model["name"] not in {"2g-gcn", "geovis-gnn"}:
         raise ValueError("model.name must be 2g-gcn or geovis-gnn")
     if model["hidden_size"] < 8 or model["hidden_size"] % 4:
         raise ValueError("model.hidden_size must be a positive multiple of four, >= 8")
-    if feature["person_detector"] != "yolo26m" or feature["person_pose"] != "rtmw-x":
+    if human["person_detector"] != "yolo26m" or human["person_pose"] != "rtmw-x":
         raise ValueError("Human recognition requires yolo26m and rtmw-x")
-    if not model["device"].startswith("cuda") or feature["workspace_mb"] <= 0:
+    if not model["device"].startswith("cuda") or human["workspace_mb"] <= 0:
         raise ValueError("TensorRT requires a CUDA device and positive workspace_mb")
-    indexes = feature["object_point_index"]
-    if len(indexes) != 2 or min(indexes) < 0 or indexes[0] == indexes[1]:
-        raise ValueError("Two distinct nonnegative object_point_index values are required")
-    if not 0 < feature["confidence"] < 1:
-        raise ValueError("feature.confidence must be between zero and one")
+    point_names = target["object_point"]
+    if not isinstance(target["object_class"], str) or not target["object_class"].strip():
+        raise ValueError("recognition.object.object_class must be a nonempty class label")
+    if (not isinstance(point_names, list) or len(point_names) != 2
+            or any(not isinstance(name, str) or not name.strip() for name in point_names)
+            or point_names[0] == point_names[1]):
+        raise ValueError("Two distinct nonempty object_point labels are required")
+    if not 0 < human["confidence"] < 1:
+        raise ValueError("recognition.human.confidence must be between zero and one")
     if not 0 < train["validation_fraction"] < 0.5:
         raise ValueError("train.validation_fraction must be between zero and 0.5")
+    resample_fps = train.setdefault("resample_fps", 20.0)
+    if (type(resample_fps) not in (int, float)
+            or not math.isfinite(resample_fps) or resample_fps <= 0):
+        raise ValueError("train.resample_fps must be finite and positive")
     if train["window_frames"] < 2 or min(train[k] for k in (
         "stride_frames", "epochs", "batch_size", "learning_rate"
     )) <= 0:

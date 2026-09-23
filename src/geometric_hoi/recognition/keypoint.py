@@ -1,6 +1,7 @@
 """Independent human and object keypoint operations."""
 
 import time
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -33,7 +34,7 @@ class HumanKeypoint:
 
     def __init__(self, setting: dict) -> None:
         self.device = setting["model"]["device"]
-        self.threshold = setting["feature"]["confidence"]
+        self.threshold = setting["recognition"]["human"]["confidence"]
         self.detector = YoloFrame(
             YOLO(str(yolo_engine(person_detector_weight(), setting)), task="detect"),
             self.device, self.threshold, 0,
@@ -74,18 +75,34 @@ class ObjectKeypoint:
 
     def __init__(self, setting: dict) -> None:
         self.device = setting["model"]["device"]
-        self.option = setting["feature"]
+        self.option = setting["recognition"]["object"]
+        self.threshold = setting["recognition"]["human"]["confidence"]
         weight = ROOT / self.option["object_weight"]
         source = YOLO(str(weight), task="pose")
         shape = getattr(source.model.model[-1], "kpt_shape", None)
-        if shape is None or max(self.option["object_point_index"]) >= shape[0]:
-            raise ValueError("Object weight must contain the configured pose keypoints")
-        if self.option["object_class"] not in source.names:
-            raise ValueError("Object class is absent from the pose weight")
-        self.point_count = int(shape[0])
+        matches = [index for index, name in source.names.items()
+                   if name == self.option["object_class"]]
+        if len(matches) != 1:
+            raise ValueError(f"Object class must match exactly once in {source.names}")
+        class_index = matches[0]
+        keypoint_names = getattr(source.model, "kpt_names", None)
+        names = keypoint_names.get(class_index) if isinstance(keypoint_names, dict) else None
+        if (not isinstance(names, (list, tuple)) or shape is None or len(names) != shape[0]
+                or any(not isinstance(name, str) for name in names)
+                or len(set(names)) != len(names)):
+            raise ValueError("Object weight must contain valid kpt_names matching its pose head")
+        missing = [name for name in self.option["object_point"] if name not in names]
+        if missing:
+            raise ValueError(f"Object points {missing} are absent; available points: {names}")
+        self.point_index = [names.index(name) for name in self.option["object_point"]]
+        self.point_count = len(self.point_index)
+        logging.getLogger(__name__).info(
+            "YOLO mapping: object_class=%s -> %s, object_point=%s -> %s",
+            self.option["object_class"], class_index, self.option["object_point"], self.point_index,
+        )
         del source
         self.pose = YoloFrame(YOLO(str(yolo_engine(weight, setting)), task="pose"),
-                              self.device, self.option["confidence"], self.option["object_class"])
+                              self.device, self.threshold, class_index)
         self.center = None
         self.performance = PerformanceWindow("object", setting["run"]["log_interval_seconds"])
 
@@ -105,13 +122,13 @@ class ObjectKeypoint:
         index = select_box(boxes, self.center)
         box = boxes[index]
         self.center = (box[:2] + box[2:]) / 2
-        point[:, :2] = prediction.keypoints.xy[index].cpu().numpy() / np.array(
+        point[:, :2] = prediction.keypoints.xy[index].cpu().numpy()[self.point_index] / np.array(
             frame.shape[1::-1], dtype=np.float32,
         )
         confidence = prediction.keypoints.conf
-        point[:, 2] = (confidence[index].cpu().numpy() if confidence is not None
+        point[:, 2] = (confidence[index].cpu().numpy()[self.point_index] if confidence is not None
                        else float(prediction.boxes.conf[index]))
-        point[~np.isfinite(point).all(axis=1) | (point[:, 2] < self.option["confidence"])] = 0
+        point[~np.isfinite(point).all(axis=1) | (point[:, 2] < self.threshold)] = 0
         self.performance.record({"pose_call": detected_at - started,
                                  "keypoint_download_postprocess": time.perf_counter() - detected_at,
                                  "total": time.perf_counter() - started})

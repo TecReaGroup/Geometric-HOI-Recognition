@@ -10,7 +10,6 @@ from .upstream import official_class
 
 JOINT_COUNT = 17
 GEOMETRY_SIZE = (JOINT_COUNT + 2) * 4
-CHECKPOINT_VERSION = 1
 
 
 class ActionModel(nn.Module):

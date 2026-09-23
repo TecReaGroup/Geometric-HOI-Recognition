@@ -9,8 +9,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from ..action.feature import FeatureExtractor
-from ..action.model import CHECKPOINT_VERSION, ActionModel
-from ..action.upstream import PATCH_VERSION, REVISION
+from ..action.model import ActionModel
 from ..recognition.engine import fingerprint as weight_digest
 from ..setting import ROOT, checkpoint_path
 from .dataset import build_dataset
@@ -25,7 +24,7 @@ def train(setting: dict) -> None:
     np.random.seed(option["seed"])
     torch.manual_seed(option["seed"])
     device = torch.device(setting["model"]["device"])
-    fingerprint = weight_digest(ROOT / setting["feature"]["object_weight"])
+    fingerprint = weight_digest(ROOT / setting["recognition"]["object"]["object_weight"])
     extractor = FeatureExtractor(setting)
     training, validation = build_dataset(setting, extractor, fingerprint)
     point_count = extractor.object_point_count
@@ -70,11 +69,10 @@ def train(setting: dict) -> None:
         if validation_loss < best_loss:
             best_loss = validation_loss
             temporary = ROOT / "temp" / f"{target.stem}.partial.pt"
-            torch.save({"version": CHECKPOINT_VERSION, "setting": setting,
+            torch.save({"setting": setting,
                         "state_dict": network.state_dict(), "object_point_count": point_count,
                         "object_weight_digest": fingerprint, "epoch": epoch,
-                        "validation_loss": best_loss, "validation_accuracy": correct / len(validation),
-                        "revision": REVISION[setting["model"]["name"]][1],
-                        "patch_version": PATCH_VERSION}, temporary)
+                        "validation_loss": best_loss,
+                        "validation_accuracy": correct / len(validation)}, temporary)
             temporary.replace(target)
             LOGGER.info("Saved best checkpoint %s", target)

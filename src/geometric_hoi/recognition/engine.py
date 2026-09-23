@@ -59,7 +59,7 @@ def engine_directory(weight: Path, setting: dict) -> Path:
     signature = (
         fingerprint(weight), torch.cuda.get_device_name(device),
         torch.cuda.get_device_capability(device), tensorrt.__version__, ort.__version__,
-        setting["feature"]["workspace_mb"], INPUT_SIZE, "fp16-v1",
+        setting["recognition"]["human"]["workspace_mb"], INPUT_SIZE, "fp16-v1",
     )
     key = hashlib.sha256(repr(signature).encode()).hexdigest()[:16]
     directory = weight.parent / "engine" / key
@@ -120,7 +120,7 @@ def yolo_engine(weight: Path, setting: dict) -> Path:
     exported = Path(YOLO(str(copied)).export(
         format="engine", imgsz=INPUT_SIZE, batch=1, dynamic=False, half=True,
         simplify=False, opset=17, device=setting["model"]["device"],
-        workspace=setting["feature"]["workspace_mb"] / 1024,
+        workspace=setting["recognition"]["human"]["workspace_mb"] / 1024,
     ))
     exported.replace(target)
     LOGGER.info("Engine persisted: %s", target)
@@ -147,7 +147,7 @@ def load_rtmw(setting: dict) -> RTMPose:
         ("TensorrtExecutionProvider", {
             "device_id": device_id,
             "trt_fp16_enable": True,
-            "trt_max_workspace_size": setting["feature"]["workspace_mb"] * 1024 * 1024,
+            "trt_max_workspace_size": setting["recognition"]["human"]["workspace_mb"] * 1024 * 1024,
             "trt_engine_cache_enable": True,
             "trt_engine_cache_path": str(cache),
             "trt_timing_cache_enable": True,
@@ -171,7 +171,7 @@ def prepare_engine(setting: dict) -> None:
 
     load_runtime()
     yolo_engine(person_detector_weight(), setting)
-    yolo_engine(ROOT / setting["feature"]["object_weight"], setting)
+    yolo_engine(ROOT / setting["recognition"]["object"]["object_weight"], setting)
     load_rtmw(setting)
     appearance_engine(setting)
     LOGGER.info("YOLO26m, RTMW-X, YOLO26-pose and ResNet50 engines are ready")

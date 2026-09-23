@@ -12,8 +12,7 @@ from ..setting import ROOT, checkpoint_path
 from ..performance import PerformanceWindow
 from ..logging import PERF
 from .feature import AppearanceFeature, pack_clip
-from .model import CHECKPOINT_VERSION, ActionModel
-from .upstream import PATCH_VERSION, REVISION
+from .model import ActionModel
 from .replay import ActionReplay
 
 LOGGER = logging.getLogger(__name__)
@@ -28,16 +27,18 @@ class ActionPrediction:
             raise FileNotFoundError(f"Train {setting['model']['name']} first; missing {path}")
         saved = torch.load(path, map_location="cpu", weights_only=True)
         trained = saved["setting"]
-        if (saved["version"] != CHECKPOINT_VERSION or saved["patch_version"] != PATCH_VERSION
-                or saved["revision"] != REVISION[setting["model"]["name"]][1]):
-            raise ValueError("Checkpoint architecture version changed; retrain")
         if trained["model"]["name"] != setting["model"]["name"]:
             raise ValueError("Checkpoint model does not match configuration")
-        for key in ("object_class", "object_point_index", "confidence",
-                    "person_detector", "person_pose"):
-            if trained["feature"].get(key) != setting["feature"][key]:
-                raise ValueError(f"feature.{key} differs from training; restore it or retrain")
-        if saved["object_weight_digest"] != fingerprint(ROOT / setting["feature"]["object_weight"]):
+        for section, keys in (("object", ("object_class", "object_point")),
+                              ("human", ("confidence", "person_detector", "person_pose"))):
+            for key in keys:
+                if trained["recognition"][section].get(key) != setting["recognition"][section][key]:
+                    raise ValueError(
+                        f"recognition.{section}.{key} differs from training; restore it or retrain"
+                    )
+        if saved["object_weight_digest"] != fingerprint(
+            ROOT / setting["recognition"]["object"]["object_weight"]
+        ):
             raise ValueError("Object pose weights changed since training; retrain")
         trained["model"]["device"] = setting["model"]["device"]
         self.setting = trained

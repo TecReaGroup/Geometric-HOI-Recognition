@@ -1,0 +1,8 @@
+names:
+  0: pen
+
+kpt_shape: [2, 3]
+kpt_names:
+  0:
+    - tip
+    - tail

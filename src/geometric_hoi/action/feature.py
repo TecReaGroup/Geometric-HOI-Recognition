@@ -70,7 +70,7 @@ class FeatureExtractor:
 def pack_clip(observation: dict[str, np.ndarray], setting: dict) -> tuple[np.ndarray, np.ndarray]:
     """Build official x/y/velocity geometry using past observations only."""
     human = observation["human_point"]
-    selected = observation["object_point"][:, setting["feature"]["object_point_index"]]
+    selected = observation["object_point"]
     point = np.concatenate((human, selected), axis=1)
     coordinate = point[:, :, :2]
     velocity = np.zeros_like(coordinate)

@@ -44,7 +44,7 @@ def run_recognition(setting: dict, stopped, mailbox, image_slots, slot_locks) ->
         performance = PerformanceWindow("preview_publish", setting["run"]["log_interval_seconds"])
         dropped = 0
         reported_at = time.perf_counter()
-        for frame, probability, elapsed in camera_prediction(
+        for frame, probability, elapsed, annotation in camera_prediction(
             setting, stopped.is_set, report_status
         ):
             started = time.perf_counter()
@@ -63,7 +63,8 @@ def run_recognition(setting: dict, stopped, mailbox, image_slots, slot_locks) ->
                     np.copyto(destination, frame)
                     packed_at = time.perf_counter()
                     mailbox.put_nowait(("frame", (slot, frame.shape[1], frame.shape[0],
-                                                  frame.shape[1] * 3, probability, elapsed, packed_at)))
+                                                  frame.shape[1] * 3, probability, elapsed, packed_at,
+                                                  annotation)))
                 except Full:
                     slot_locks[slot].release()
                     dropped += 1

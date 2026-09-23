@@ -51,7 +51,7 @@ def appearance_engine(setting: dict) -> Path:
     config = builder.create_builder_config()
     config.set_flag(trt.BuilderFlag.FP16)
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE,
-                                setting["feature"]["workspace_mb"] * 1024 * 1024)
+                                setting["recognition"]["human"]["workspace_mb"] * 1024 * 1024)
     LOGGER.info("Building ResNet50 TensorRT FP16 batch=%d engine=%s", BATCH_SIZE, target)
     serialized = builder.build_serialized_network(network, config)
     if serialized is None:
