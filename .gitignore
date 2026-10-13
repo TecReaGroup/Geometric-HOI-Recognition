@@ -39,6 +39,9 @@ temp/*
 data/video/**
 !data/video/**/
 !data/video/**/.gitkeep
+data/output/**
+!data/output/**/
+!data/output/**/.gitkeep
 log/*
 !log/.gitkeep
 

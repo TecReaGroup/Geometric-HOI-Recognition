@@ -2,7 +2,7 @@ UV ?= uv
 CONFIG ?= config/config.toml
 PACKAGE ?= package
 
-.PHONY: install install-local tensorrt train run
+.PHONY: install install-local tensorrt train run render
 install:
 	$(UV) sync
 	$(UV) run geometric-hoi prepare --config $(CONFIG)
@@ -20,3 +20,6 @@ train:
 
 run:
 	$(UV) run geometric-hoi run --config $(CONFIG)
+
+render:
+	$(UV) run geometric-hoi render --config $(CONFIG)

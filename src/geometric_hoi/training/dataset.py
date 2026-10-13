@@ -23,7 +23,7 @@ def extract_video(path: Path, extractor: FeatureExtractor, setting: dict, finger
     stamp = path.stat()
     resample_fps = setting["train"]["resample_fps"]
     signature = json.dumps([str(path.resolve()), stamp.st_size, stamp.st_mtime_ns,
-                            setting["recognition"], resample_fps, fingerprint],
+                            setting["recognition"], setting["hand"], resample_fps, fingerprint],
                            sort_keys=True)
     cache = ROOT / "temp" / "feature" / (hashlib.sha256(signature.encode()).hexdigest() + ".npz")
     if cache.exists():

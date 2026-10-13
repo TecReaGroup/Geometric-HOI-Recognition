@@ -2,9 +2,17 @@
 
 import logging
 import multiprocessing
+import sys
 import threading
 import time
 from queue import Empty
+
+if sys.platform == "win32":
+    import ctypes
+
+    # NOTE: Conda's icuuc.dll lacks the unversioned ICU exports required by Qt.
+    LOAD_LIBRARY_SEARCH_SYSTEM32 = 0x00000800
+    SYSTEM_ICU = ctypes.WinDLL("icuuc.dll", winmode=LOAD_LIBRARY_SEARCH_SYSTEM32)
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen

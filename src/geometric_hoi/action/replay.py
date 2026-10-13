@@ -4,7 +4,7 @@ import logging
 
 import torch
 
-from .model import GEOMETRY_SIZE
+from .model import ActionModel
 
 LOGGER = logging.getLogger(__name__)
 WARMUP_ITERATIONS = 3
@@ -14,10 +14,10 @@ class ActionReplay:
     """Own persistent inputs and outputs for one batch-one action graph."""
 
     @torch.inference_mode()
-    def __init__(self, network: torch.nn.Module, window: int, object_points: int,
+    def __init__(self, network: ActionModel, window: int,
                  device: torch.device) -> None:
-        self.human = torch.zeros((1, window, 1, 2048 + GEOMETRY_SIZE), device=device)
-        self.target = torch.zeros((1, window, 1, 2048 + object_points * 3), device=device)
+        self.human = torch.zeros((1, window, 1, network.input_size[0]), device=device)
+        self.target = torch.zeros((1, window, 1, network.input_size[1]), device=device)
         stream = torch.cuda.Stream(device=device)
         stream.wait_stream(torch.cuda.current_stream(device))
         with torch.cuda.stream(stream):

@@ -1,6 +1,7 @@
 """Appearance and temporal features shared by training and live recognition."""
 
 import time
+import logging
 
 import numpy as np
 import torch
@@ -9,12 +10,16 @@ from ..recognition.engine import load_runtime
 from ..performance import PerformanceWindow
 from ..recognition.keypoint import HumanKeypoint, KeypointObservation, ObjectKeypoint
 from .appearance import AppearanceEncoder
+from ..setting import HAND_POINT_INDEX
 
 
 class AppearanceFeature:
     """Encode the crops belonging to one aligned human/object observation."""
 
     def __init__(self, setting: dict) -> None:
+        side = setting["hand"]["side"]
+        self.hand_point_index = list(HAND_POINT_INDEX[side])
+        logging.getLogger(__name__).info("HOI hand=%s keypoints=%d", side, len(self.hand_point_index))
         self.device = torch.device(setting["model"]["device"])
         self.encoder = AppearanceEncoder(setting)
         self.performance = PerformanceWindow("appearance", setting["run"]["log_interval_seconds"])
@@ -22,7 +27,7 @@ class AppearanceFeature:
     @torch.inference_mode()
     def extract(self, frame: np.ndarray, human: KeypointObservation,
                 target: KeypointObservation) -> dict[str, np.ndarray]:
-        """Select COCO17 from RTMW and attach aligned frozen crop descriptors."""
+        """Select configured RTMW hand points and attach aligned crop descriptors."""
         started = time.perf_counter()
         height, width = frame.shape[:2]
         appearance = np.zeros((2, 2048), dtype=np.float32)
@@ -43,7 +48,7 @@ class AppearanceFeature:
         if slots:
             duration[f"resnet_trt_batch2_valid_{len(slots)}"] = finished - prepared_at
         self.performance.record(duration)
-        return {"human_point": human.point[:17], "object_point": target.point,
+        return {"human_point": human.point[self.hand_point_index], "object_point": target.point,
                 "appearance": appearance}
 
 

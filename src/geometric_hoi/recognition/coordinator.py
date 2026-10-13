@@ -3,6 +3,7 @@
 import logging
 import time
 from collections.abc import Callable, Iterator
+from contextlib import closing
 from importlib.util import module_from_spec, spec_from_file_location
 
 from ..setting import ROOT
@@ -15,6 +16,15 @@ CAMERA_POLL_SECONDS = 0.1
 
 def camera_prediction(
     setting: dict, stopped: Callable[[], bool], report_status: Callable[[str], None]
+) -> Iterator[tuple]:
+    """Feed camera observations through the shared recognition pipeline."""
+    with closing(camera_frame(setting, stopped, report_status)) as frames:
+        yield from frame_prediction(setting, frames, stopped, report_status)
+
+
+def frame_prediction(
+    setting: dict, frames: Iterator[tuple], stopped: Callable[[], bool],
+    report_status: Callable[[str], None],
 ) -> Iterator[tuple]:
     """Dispatch one shared frame and yield only its fully aligned action prediction."""
     from ..action.prediction import ActionPrediction
@@ -50,37 +60,20 @@ def camera_prediction(
     workers = [KeypointWorker("human", human_estimator, bus, device),
                KeypointWorker("object", object_estimator, bus, device)]
     option = setting["run"]
-    camera_option = setting["camera"]
-    driver_name = camera_option["driver"]
-    driver_path = ROOT / "device" / f"{driver_name}.py"
-    spec = spec_from_file_location(driver_name, driver_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load camera driver {driver_path}")
-    driver_module = module_from_spec(spec)
-    spec.loader.exec_module(driver_module)
-    camera_class = getattr(driver_module, driver_name)
     last_log = 0.0
-    capture = camera_class(camera_option)
     performance = PerformanceWindow("pipeline", option["log_interval_seconds"])
     try:
         for worker in workers:
             worker.start()
-        report_status("正在打开摄像头…")
-        capture.open()
-        report_status("正在等待首帧推理…")
         sequence = 0
-        last_frame = time.perf_counter()
-        LOGGER.info("Camera driver=%s device=%s model=%s; human/object workers ready",
-                    driver_name, camera_option["deviceId"], setting["model"]["name"])
+        LOGGER.info("Recognition model=%s; human/object workers ready", setting["model"]["name"])
         while not stopped():
             poll_started = time.perf_counter()
-            captured_at, frame = capture.getFrame(timeout=CAMERA_POLL_SECONDS)
+            try:
+                captured_at, frame = next(frames)
+            except StopIteration:
+                break
             now = time.perf_counter()
-            if frame is None:
-                if now - last_frame >= camera_option["timeout_seconds"]:
-                    raise RuntimeError("Camera stopped delivering frames")
-                continue
-            last_frame = now
             sequence += 1
             packet = CaptureFrame(sequence, captured_at, frame)
             bus.submit(packet)
@@ -94,23 +87,53 @@ def camera_prediction(
             finished = time.perf_counter()
             elapsed = finished - now
             performance.record({"capture_wait": now - poll_started,
-                                "frame_age_at_dispatch": now - captured_at,
                                 "keypoint_wait": paired_at - now,
                                 "action": finished - paired_at,
-                                "processing": elapsed,
-                                "capture_to_prediction": finished - captured_at})
+                                "processing": elapsed})
             if now - last_log >= option["log_interval_seconds"]:
                 LOGGER.log(PERF, "action=%s confidence=%.4f detected=%s inference_ms=%.1f",
                             option["action_name"], confidence, action.active, elapsed * 1000)
                 last_log = now
             annotation = overlay.snapshot(pair["human"], pair["object"], confidence >= option["threshold"],
-                                          finished, frame.shape)
+                                          captured_at, frame.shape)
             yield frame, confidence, elapsed, annotation
     finally:
         bus.close()
         for worker in workers:
             if worker.ident is not None:
                 worker.join()
+        LOGGER.info("Recognition workers released")
+
+
+def camera_frame(
+    setting: dict, stopped: Callable[[], bool], report_status: Callable[[str], None]
+) -> Iterator[tuple]:
+    """Own camera capture and reject a stalled device."""
+    camera_option = setting["camera"]
+    driver_name = camera_option["driver"]
+    driver_path = ROOT / "device" / f"{driver_name}.py"
+    spec = spec_from_file_location(driver_name, driver_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load camera driver {driver_path}")
+    driver_module = module_from_spec(spec)
+    spec.loader.exec_module(driver_module)
+    capture = getattr(driver_module, driver_name)(camera_option)
+    try:
+        report_status("正在打开摄像头…")
+        capture.open()
+        report_status("正在等待首帧推理…")
+        last_frame = time.perf_counter()
+        LOGGER.info("Camera driver=%s device=%s", driver_name, camera_option["deviceId"])
+        while not stopped():
+            captured_at, frame = capture.getFrame(timeout=CAMERA_POLL_SECONDS)
+            now = time.perf_counter()
+            if frame is None:
+                if now - last_frame >= camera_option["timeout_seconds"]:
+                    raise RuntimeError("Camera stopped delivering frames")
+                continue
+            last_frame = now
+            yield captured_at, frame
+    finally:
         capture.stopThread()
         LOGGER.info("Camera released")
 

@@ -15,6 +15,10 @@ name = "geovis-gnn"
 hidden_size = 128
 device = "cuda:0"
 
+[hand]
+# "left", "right" or "both"; anatomical sides of the detected person.
+side = "right"
+
 [train]
 video_dir = "data/video"
 resample_fps = 20.0

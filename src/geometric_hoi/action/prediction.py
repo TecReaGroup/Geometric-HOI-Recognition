@@ -23,6 +23,7 @@ def validate_checkpoint(saved: dict, setting: dict) -> None:
     retrain = "请使用当前配置执行 make train 重新训练动作识别模型。"
     try:
         trained = saved["setting"]
+        trained_hand = trained["hand"]["side"]
         model_name = trained["model"]["name"]
         trained["model"]["hidden_size"]
         trained["train"]["window_frames"]
@@ -39,6 +40,8 @@ def validate_checkpoint(saved: dict, setting: dict) -> None:
         raise ValueError(f"动作识别检查点格式已过期或不完整（缺失或无效字段：{exc}）。{retrain}") from exc
     if model_name != setting["model"]["name"]:
         raise ValueError(f"动作识别检查点的模型类型与当前配置不一致。{retrain}")
+    if trained_hand != setting["hand"]["side"]:
+        raise ValueError(f"hand.side 与训练时不一致。{retrain}")
     for section, key, trained_value in contracts:
         if trained_value != setting["recognition"][section][key]:
             raise ValueError(f"recognition.{section}.{key} 与训练时不一致。{retrain}")
@@ -66,8 +69,7 @@ class ActionPrediction:
         self.window_frames = trained["train"]["window_frames"]
         self.infer = self.network
         if self.device.type == "cuda":
-            self.infer = ActionReplay(self.network, self.window_frames,
-                                     saved["object_point_count"], self.device)
+            self.infer = ActionReplay(self.network, self.window_frames, self.device)
         self.frames = deque(maxlen=self.window_frames)
         self.threshold = setting["run"]["threshold"]
         self.active = None

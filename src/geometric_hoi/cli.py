@@ -11,7 +11,7 @@ from .setting import ROOT, configure_directory, load_setting
 def main() -> None:
     """Dispatch a complete application operation."""
     parser = argparse.ArgumentParser(description="Official 2G-GCN / GeoVis-GNN HOI recognition")
-    parser.add_argument("command", choices=("prepare", "engine", "train", "run"))
+    parser.add_argument("command", choices=("prepare", "engine", "train", "run", "render"))
     parser.add_argument("--config", type=Path, default=ROOT / "config" / "config.toml")
     arguments = parser.parse_args()
     configure_directory()
@@ -19,7 +19,7 @@ def main() -> None:
     try:
         setting = load_setting(arguments.config)
         configure_logging(setting["logging"]["level"])
-        if arguments.command in {"engine", "train"}:
+        if arguments.command in {"engine", "train", "render"}:
             import torch
 
             device = torch.device(setting["model"]["device"])
@@ -44,6 +44,10 @@ def main() -> None:
             from .training.train import train
 
             train(setting)
+        elif arguments.command == "render":
+            from .recognition.render import render_video
+
+            render_video(setting)
         else:
             from .recognition.preview import run_preview
 

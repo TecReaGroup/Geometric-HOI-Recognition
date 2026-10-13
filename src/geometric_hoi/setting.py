@@ -6,6 +6,11 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+HAND_POINT_INDEX = {
+    "left": tuple(range(91, 112)),
+    "right": tuple(range(112, 133)),
+    "both": tuple(range(91, 133)),
+}
 
 
 def load_setting(path: Path) -> dict:
@@ -19,6 +24,10 @@ def load_setting(path: Path) -> dict:
     if not isinstance(level, str) or level.upper() not in LOG_LEVELS:
         raise ValueError(f"logging.level must be one of {', '.join(LOG_LEVELS)}")
     log_setting["level"] = level.upper()
+    hand = setting.setdefault("hand", {})
+    side = hand.setdefault("side", "right")
+    if not isinstance(side, str) or side not in HAND_POINT_INDEX:
+        raise ValueError("hand.side must be left, right or both")
     view = setting.setdefault("view", {})
     for key in ("hand_skeleton", "yolo_pose_keypoint", "yolo_pose_box", "tip_trajectory"):
         if not isinstance(view.setdefault(key, True), bool):
