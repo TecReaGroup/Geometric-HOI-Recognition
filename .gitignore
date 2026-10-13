@@ -50,8 +50,9 @@ package/
 # Large local audio/model assets and generated outputs
 data/audio/*
 !data/audio/.gitkeep
-data/model/*
-!data/model/.gitkeep
+data/model/**
+!data/model/**/
+!data/model/**/.gitkeep
 data/stem/*
 !data/stem/.gitkeep
 data/stem_gated/*
